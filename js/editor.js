@@ -19,6 +19,7 @@ import { pintarItem, alCargar, colorFondo, pintarPapel, pintarCapas, ordenItems 
 import { HERRAMIENTAS_DEF, uid, esPalma, cajaDe, unirCajas } from "./model.js";
 import { db } from "./db.js";
 import { olvidar } from "./cache.js";
+import * as diag from "./diag.js";
 import { crearHerramientas } from "./herramientas.js";
 import * as paneles from "./paneles.js";
 
@@ -430,7 +431,9 @@ export class Editor {
     if (!this.vivoSucio || this._vivoEnEste) return;
     this._vivoEnEste = true;
     this.vivoSucio = false;
+    const a = performance.now();
     this.pintarVivo();
+    this._vivoMs = (this._vivoMs || 0) + performance.now() - a;
   }
 
   pedirVivo(zona) {
@@ -449,7 +452,10 @@ export class Editor {
     this._vivoEnEste = false;
     // escribiendo, poco tiempo para repintar páginas: el lápiz manda
     const presupuesto = this.modo === "dibujo" ? 4 : this.gesto ? 6 : 14;
-    if (this.vivoSucio) { this.vivoSucio = false; this.pintarVivo(); }
+    let tv = this._vivoMs || 0;
+    this._vivoMs = 0;
+    if (this.vivoSucio) { this.vivoSucio = false; const a = performance.now(); this.pintarVivo(); tv = performance.now() - a; }
+    const pendientes = this.sucias.size + [...this.vistas.values()].filter((v) => v.pend).length;
     for (const i of [...this.sucias]) {
       this.sucias.delete(i);
       this.empezarVista(i);
@@ -466,6 +472,7 @@ export class Editor {
       if (quedan || performance.now() - t0 > presupuesto) quedan = true;
       else if (!this.seguirDetalle(t0 + presupuesto)) quedan = true;
     }
+    if (this.modo === "dibujo") diag.fotograma(performance.now() - t0, tv, pendientes);
     if (this.sucias.size || quedan) this.pedir();
   }
 
@@ -843,6 +850,8 @@ export class Editor {
     if (n === 1 && this.dibujaConEste(e)) {
       this.modo = "dibujo";
       this.punteroDibujo = p;
+      diag.empezarTrazo({ herr: this.herrActual, z: +this.escalaPantalla(this.paginaActual()).toFixed(2), detalle: !!this.detalleOn,
+        lienzosMP: +([...document.querySelectorAll("canvas")].reduce((a, c) => a + c.width * c.height, 0) / 1e6).toFixed(1) });
       this.herr.down && this.herr.down(e, p);
       return;
     }
@@ -874,6 +883,7 @@ export class Editor {
     if (this.modo === "dibujo" && p === this.punteroDibujo) {
       // eventos agrupados: más puntos por fotograma, trazo más fiel
       const lista = e.getCoalescedEvents ? e.getCoalescedEvents() : null;
+      diag.evento(e, lista ? lista.length : 1);
       if (lista && lista.length) for (const c of lista) this.herr.move && this.herr.move(c, p);
       else this.herr.move && this.herr.move(e, p);
       this.pintarVivoYa();
@@ -918,6 +928,7 @@ export class Editor {
     }
     if (p.ignorado) { if (!this.punteros.size && this.modo !== "dibujo") this.modo = null; return; }
     if (this.modo === "dibujo" && p === this.punteroDibujo) {
+      diag.terminarTrazo();
       const hist = this.historial.length;
       if (cancelado && this.herr.cancelar) this.herr.cancelar();
       else this.herr.up && this.herr.up(e, p);

@@ -5,12 +5,13 @@
 import { store } from "./store.js";
 import { db } from "./db.js";
 import { el, icono, boton, menu, dialogo, pedirTexto, confirmar, aviso, pulsacionLarga, leerArchivo,
-  segmentado, interruptor, cerrarEmergente, emergente, selectorColor } from "./ui.js";
+  segmentado, interruptor, cerrarEmergente, emergente, selectorColor, compartirArchivo } from "./ui.js";
 import { PORTADAS, fecha, esPalma, nuevaPagina } from "./model.js";
 import { miniatura, alCargar, documentoPdf } from "./render.js";
 import { elegirPapel, editarEtiquetas } from "./paneles.js";
 import { importarArchivos, exportarPdf } from "./pdfio.js";
 import { crearCopia, restaurarCopia } from "./backup.js";
+import * as diag from "./diag.js";
 
 export class Biblioteca {
   constructor(app) {
@@ -528,11 +529,22 @@ export class Biblioteca {
     cv.addEventListener("pointerup", soltar);
     cv.addEventListener("pointercancel", soltar);
     for (const t of ["touchstart", "touchmove"]) cv.addEventListener(t, (e) => e.preventDefault(), { passive: false });
+    // y lo que pasó escribiendo en los cuadernos (diag.js)
+    const r = diag.resumen();
+    const enCuaderno = el("div", { class: "lapiz-medidas" }, r
+      ? `In your notebooks (last ${r.trazos} strokes): ${r.puntosPorSegundo} points/s · ${r.separacionPx} px apart · handled ${r.esperaMs} ms late (worst ${r.esperaP95}) · ${r.fps} fps, slow frames ${r.lentos}% · frame ${r.fotogramaMs} ms (worst ${r.fotogramaP95}) · ink ${r.vivoMs} ms · pages repainting ${r.conPaginas}%`
+      : "Write a few lines in a notebook, then come back here to see how it went.");
     const cuerpo = el("div", { class: "prueba-lapiz" }, [
-      info, cv, medidas,
+      info, cv, medidas, enCuaderno,
       el("p", { class: "nota" }, "Blue = it writes. Red = it's taken as your palm and ignored. If your stylus shows red, tap \"Use my stylus\" after writing a few words."),
     ]);
     dialogo("Stylus test", cuerpo, [
+      { texto: "Export diagnostics", fn: async () => {
+        if (!diag.resumen()) { aviso("First write a few lines in a notebook"); return false; }
+        const datos = diag.exportar({ prueba: { puntosPorSegundo: M.dts.length ? Math.round(1000 / M.dts.slice().sort((a, b) => a - b)[M.dts.length >> 1]) : null, temblor: M.temblor }, ajustes: await db.getKV("herramientas", {}) });
+        await compartirArchivo(new Blob([datos], { type: "application/json" }), "libreta-diagnostico.json");
+        return false;
+      } },
       { texto: "Apply smoothing", fn: async () => {
         if (M.recomendado == null) { aviso("First hold the stylus still for 1 second in the box"); return false; }
         const h = await db.getKV("herramientas", {});

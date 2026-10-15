@@ -1,10 +1,10 @@
 // Service worker: guarda la app entera para que funcione sin conexión.
 // Al cambiar cualquier fichero, sube VERSION para que el iPad baje la nueva.
-const VERSION = "libreta-v11";
+const VERSION = "libreta-v12";
 const ARCHIVOS = [
   "./", "index.html", "manifest.webmanifest", "css/app.css",
   "js/app.js", "js/db.js", "js/model.js", "js/store.js", "js/ink.js", "js/render.js", "js/ui.js",
-  "js/editor.js", "js/herramientas.js", "js/paneles.js", "js/library.js", "js/pdfio.js", "js/backup.js", "js/noteful.js", "js/cache.js",
+  "js/editor.js", "js/herramientas.js", "js/paneles.js", "js/library.js", "js/pdfio.js", "js/backup.js", "js/noteful.js", "js/cache.js", "js/diag.js",
   "vendor/pdf.min.js", "vendor/pdf.worker.min.js", "vendor/pdf-lib.min.js", "vendor/fflate.js",
   "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png",
 ];
