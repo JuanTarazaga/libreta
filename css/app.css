@@ -340,3 +340,10 @@ input, textarea, select { font: inherit; color: inherit; -webkit-user-select: te
   .biblioteca { grid-template-columns: 1fr; }
   .lateral { display: none; }
 }
+
+/* prueba del lápiz */
+.prueba-lapiz { display: flex; flex-direction: column; gap: 10px; }
+.lapiz-lienzo { width: 100%; height: 240px; border: 2px dashed var(--borde); border-radius: 12px; background: var(--panel-2); touch-action: none; }
+.lapiz-info { font-weight: 600; padding: 8px 12px; border-radius: 10px; background: var(--panel-2); font-variant-numeric: tabular-nums; }
+.lapiz-info.bien { color: #12814a; }
+.lapiz-info.mal { color: var(--peligro); }

@@ -16,7 +16,7 @@
 import { store } from "./store.js";
 import { el, icono, boton, aviso, cerrarEmergente } from "./ui.js";
 import { pintarPagina, pintarItem, alCargar, colorFondo } from "./render.js";
-import { HERRAMIENTAS_DEF, uid } from "./model.js";
+import { HERRAMIENTAS_DEF, uid, esPalma } from "./model.js";
 import { db } from "./db.js";
 import { crearHerramientas } from "./herramientas.js";
 import * as paneles from "./paneles.js";
@@ -519,15 +519,7 @@ export class Editor {
   }
 
   // ── entrada ──────────────────────────────────────────────────────────────
-  esPalma(e) {
-    if (e.pointerType !== "touch") return false;
-    const nivel = this.ajustes.rechazoPalma;
-    if (!nivel) return false;
-    // iOS da el tamaño del contacto en width/height (px CSS): la punta de un
-    // lápiz capacitivo ronda 8-25; la palma, mucho más
-    const lim = [999, 70, 50, 38][nivel];
-    return (e.width || 0) > lim || (e.height || 0) > lim;
-  }
+  esPalma(e) { return esPalma(this.ajustes, e); }
 
   dibujaConEste(e) {
     if (e.pointerType === "pen" || e.pointerType === "mouse") return true;
@@ -543,7 +535,16 @@ export class Editor {
   pDown(e) {
     if (this.esInterfaz(e.target)) return;
     cerrarEmergente();
-    if (this.esPalma(e)) return;
+    if (this.esPalma(e)) {
+      // varios toques ignorados seguidos y nada escrito: quizá es el lápiz
+      const ahora = performance.now();
+      this._palmas = (this._palmas || []).filter((t) => ahora - t < 6000).concat([ahora]);
+      if (this._palmas.length >= 4 && !this.modo && !this._avisoPalma) {
+        this._avisoPalma = true;
+        aviso("Touches ignored as palm. If it's your stylus: Library → Settings → Stylus test", 5000);
+      }
+      return;
+    }
     this.vista.setPointerCapture(e.pointerId);
     const p = { id: e.pointerId, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t0: performance.now(), tipo: e.pointerType };
     this.punteros.set(e.pointerId, p);

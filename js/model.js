@@ -293,3 +293,18 @@ export function fecha(t) {
   return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) +
     " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
+
+// ¿Este toque es la palma? (editor y prueba del lápiz deciden igual)
+// Calibrado con SU lápiz (Ajustes → Stylus test): palma = bastante más grande
+// que la punta. Sin calibrar, umbrales generosos: con 38-70 px el lápiz
+// capacitivo de Juan se tomaba por la palma y no escribía (15-oct). iOS da el
+// contacto en width/height (px CSS, a saltos): un dedo o una punta de goma
+// suele quedar en 20-90; una palma apoyada, 120 o más.
+export function esPalma(ajustes, e) {
+  if (e.pointerType !== "touch") return false;
+  const nivel = ajustes.rechazoPalma;
+  if (!nivel) return false;
+  const tam = Math.max(e.width || 0, e.height || 0);
+  if (ajustes.anchoLapiz) return tam > ajustes.anchoLapiz * [99, 2.6, 1.9, 1.5][nivel];
+  return tam > [999, 220, 150, 115][nivel];
+}

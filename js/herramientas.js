@@ -63,20 +63,49 @@ class Escritura {
     }, ed.escalaPantalla(c.i));
     this.cap.añadir(c.x, c.y, e.timeStamp);
     this.forma = null;
+    this.tachando = null; this.tTachado = 0;
     this.armarForma(p);
     ed.pedirVivo();
   }
 
+  // lo que borraría el garabato de tachar: trazos con al menos un 30 % de sus
+  // puntos dentro de la caja del garabato
+  bajoTachado(pts) {
+    const caja = cajaPuntos(pts);
+    return this.ed.items(this.i).filter((o) => {
+      if (o.type !== "stroke" || !cortan(cajaDe(o), caja)) return false;
+      let n = 0, d = 0;
+      for (let k = 0; k < o.pts.length; k += 3) {
+        n++;
+        if (o.pts[k] >= caja.x && o.pts[k] <= caja.x + caja.w && o.pts[k + 1] >= caja.y && o.pts[k + 1] <= caja.y + caja.h) d++;
+      }
+      return d / n >= 0.3;
+    });
+  }
+
+  // quieto un momento: si es un garabato de tachar, borra YA (Juan, 15-oct:
+  // "cuando lo dejes un poco se quite, porque sino no sabes si se quitará");
+  // si no, la forma reconocida
   armarForma(p) {
     clearTimeout(this.tForma);
     const aj = this.aj();
-    if (!aj.formaAlMantener) return;
     this.anclaForma = { x: p.x, y: p.y };
+    const tachar = this.clave === "pen" && aj.tachadoBorra && this.tachando && this.tachando.length;
+    if (!tachar && !aj.formaAlMantener) return;
     this.tForma = setTimeout(() => {
       if (!this.cap || this.forma) return;
+      if (this.clave === "pen" && aj.tachadoBorra && this.tachando && this.tachando.length) {
+        const fuera = new Set(this.tachando);
+        this.ed.cambiar(this.i, (pg) => { for (const c of pg.layers) if (!c.locked) c.items = c.items.filter((o) => !fuera.has(o)); });
+        this.cap = null; this.tachando = null;
+        if (navigator.vibrate) navigator.vibrate(12);
+        this.ed.pedirVivo();
+        return;
+      }
+      if (!aj.formaAlMantener) return;
       const f = reconocerForma(this.cap.pts);
       if (f) { this.forma = f; this.ed.pedirVivo(); if (navigator.vibrate) navigator.vibrate(8); }
-    }, (aj.retardoForma || 0.6) * 1000);
+    }, tachar ? 350 : (aj.retardoForma || 0.6) * 1000);
   }
 
   move(e, p) {
@@ -88,6 +117,14 @@ class Escritura {
       else return;
     }
     this.cap.añadir(c.x, c.y, e.timeStamp);
+    // tachar: mientras se garabatea, en rojo lo que se va a borrar
+    if (this.clave === "pen" && this.aj().tachadoBorra) {
+      const ahora = performance.now();
+      if (!this.tTachado || ahora - this.tTachado > 120) {
+        this.tTachado = ahora;
+        this.tachando = esTachado(this.cap.pts) ? this.bajoTachado(this.cap.pts) : null;
+      }
+    }
     if (Math.hypot(p.x - this.anclaForma.x, p.y - this.anclaForma.y) > 3) this.armarForma(p);
     this.ed.pedirVivo();
   }
@@ -109,15 +146,13 @@ class Escritura {
         this.it.pts = [pts[0], pts[1], 1, pts[n - 3], pts[n - 2], 1];
       } else this.it.pts = Array.from(pts);
       it = this.it;
-      // tachar para borrar: los trazos bajo el garabato se van
+      // tachar para borrar, también al soltar (si no se quedó quieto)
       if (this.clave === "pen" && aj.tachadoBorra && esTachado(it.pts)) {
-        const caja = cajaPuntos(it.pts);
-        const bajo = ed.items(i).filter((o) => o.type === "stroke" && cortan(cajaDe(o), caja) &&
-          o.pts.some((_, k) => k % 3 === 0 && o.pts[k] >= caja.x && o.pts[k] <= caja.x + caja.w && o.pts[k + 1] >= caja.y && o.pts[k + 1] <= caja.y + caja.h));
+        const bajo = this.bajoTachado(it.pts);
         if (bajo.length) {
           const fuera = new Set(bajo);
-          ed.cambiar(i, (pg) => { for (const c of pg.layers) c.items = c.items.filter((o) => !fuera.has(o)); });
-          this.cap = null; ed.pedirVivo();
+          ed.cambiar(i, (pg) => { for (const c of pg.layers) if (!c.locked) c.items = c.items.filter((o) => !fuera.has(o)); });
+          this.cap = null; this.tachando = null; ed.pedirVivo();
           return;
         }
       }
@@ -137,12 +172,16 @@ class Escritura {
     return it;
   }
 
-  cancelar() { clearTimeout(this.tForma); this.cap = null; this.forma = null; this.ed.pedirVivo(); }
+  cancelar() { clearTimeout(this.tForma); this.cap = null; this.forma = null; this.tachando = null; this.ed.pedirVivo(); }
 
   pintarVivo(ctx) {
     if (!this.cap) return;
     this.ed.enPagina(ctx, this.i);
     if (this.forma) { pintarItem(ctx, this.formaItem(this.forma)); return; }
+    // lo que se va a borrar al tachar: encima, en rojo translúcido
+    if (this.tachando && this.tachando.length) {
+      for (const o of this.tachando) pintarItem(ctx, { ...o, color: "#ef4444", op: 0.75, _dens: o._dens, _r: o._r });
+    }
     const pts = this.cap.pts;
     if (pts.length < 3) return;
     let vis = pts;

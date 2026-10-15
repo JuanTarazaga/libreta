@@ -6,7 +6,7 @@ import { store } from "./store.js";
 import { db } from "./db.js";
 import { el, icono, boton, menu, dialogo, pedirTexto, confirmar, aviso, pulsacionLarga, leerArchivo,
   segmentado, interruptor, cerrarEmergente, emergente, selectorColor } from "./ui.js";
-import { PORTADAS, fecha } from "./model.js";
+import { PORTADAS, fecha, esPalma } from "./model.js";
 import { miniatura, alCargar } from "./render.js";
 import { elegirPapel, editarEtiquetas } from "./paneles.js";
 import { importarArchivos, exportarPdf } from "./pdfio.js";
@@ -401,6 +401,55 @@ export class Biblioteca {
     ]);
   }
 
+  // ── prueba del lápiz: qué le llega a la app de cada toque y calibrar el
+  // rechazo de palma a SU lápiz (Juan, 15-oct: "no me deja escribir con mi
+  // lápiz inteligente")
+  pruebaLapiz() {
+    const aj = this.aj;
+    const info = el("div", { class: "lapiz-info" }, "Write in the box with your stylus. Then rest your palm on it.");
+    const cv = el("canvas", { class: "lapiz-lienzo" });
+    const tams = [];
+    let ctx = null;
+    const ajustar = () => {
+      const r = cv.getBoundingClientRect(), d = window.devicePixelRatio || 1;
+      cv.width = r.width * d; cv.height = r.height * d;
+      ctx = cv.getContext("2d"); ctx.scale(d, d);
+    };
+    const toque = (e) => {
+      e.preventDefault();
+      if (!ctx) ajustar();
+      const r = cv.getBoundingClientRect();
+      const tam = Math.max(e.width || 0, e.height || 0);
+      const palma = esPalma(aj, e);
+      if (!palma && e.pointerType === "touch") tams.push(tam);
+      ctx.fillStyle = palma ? "rgba(229,72,77,.5)" : "rgba(47,111,236,.85)";
+      ctx.beginPath(); ctx.arc(e.clientX - r.left, e.clientY - r.top, Math.max(2, tam / 6), 0, 7); ctx.fill();
+      info.textContent = `${e.pointerType} · contact ${Math.round(e.width || 0)}×${Math.round(e.height || 0)} px · ` +
+        (palma ? "REJECTED as palm" : "draws ✓");
+      info.className = "lapiz-info " + (palma ? "mal" : "bien");
+    };
+    cv.addEventListener("pointerdown", (e) => { cv.setPointerCapture(e.pointerId); toque(e); });
+    cv.addEventListener("pointermove", (e) => { if (e.buttons || e.pointerType === "touch") toque(e); });
+    for (const t of ["touchstart", "touchmove"]) cv.addEventListener(t, (e) => e.preventDefault(), { passive: false });
+    const cuerpo = el("div", { class: "prueba-lapiz" }, [
+      info, cv,
+      el("p", { class: "nota" }, "Blue = it writes. Red = it's taken as your palm and ignored. If your stylus shows red, tap \"Use my stylus\" after writing a few words."),
+    ]);
+    dialogo("Stylus test", cuerpo, [
+      { texto: "Forget calibration", fn: () => { delete aj.anchoLapiz; this.app.guardarAjustes(); aviso("Calibration removed"); } },
+      { texto: "Use my stylus", principal: true, fn: () => {
+        if (tams.length < 10) { aviso("Write a few words first (only with the stylus)"); return false; }
+        // el contacto típico del lápiz: el percentil 80 de lo escrito
+        const orden = tams.slice().sort((a, b) => a - b);
+        aj.anchoLapiz = Math.max(20, orden[Math.floor(orden.length * 0.8)]);
+        this.app.guardarAjustes();
+        aviso(`Calibrated: stylus contact ${Math.round(aj.anchoLapiz)} px`);
+      } },
+      { texto: "Close" },
+    ], { clase: "ancho" });
+    setTimeout(ajustar, 50);
+  }
+
   // ── ajustes ──
   async ajustes() {
     const aj = this.aj;
@@ -424,6 +473,10 @@ export class Biblioteca {
       interruptor("Draw with finger / capacitive stylus", aj.dibujarConDedo, (v) => { aj.dibujarConDedo = v; guardar(); }),
       el("label", { class: "deslizador" }, [el("span", {}, "Palm rejection"),
         segmentado([[0, "Off"], [1, "Soft"], [2, "Normal"], [3, "Strong"]], aj.rechazoPalma, (v) => { aj.rechazoPalma = v; guardar(); })]),
+      el("div", { class: "fila-botones" }, [
+        el("button", { class: "dbtn", onclick: () => this.pruebaLapiz() }, "Stylus test & calibration"),
+        aj.anchoLapiz ? el("span", { class: "nota" }, `Calibrated: stylus contact ${Math.round(aj.anchoLapiz)} px`) : null,
+      ]),
       el("div", { class: "aj-grupo" }, "Gestures"),
       interruptor("Two-finger tap to undo, three to redo", aj.gestoDeshacer, (v) => { aj.gestoDeshacer = v; guardar(); }),
       interruptor("Two-finger double tap to fit width", aj.dobleToqueAjuste, (v) => { aj.dobleToqueAjuste = v; guardar(); }),
