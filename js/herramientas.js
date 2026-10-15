@@ -3,7 +3,7 @@
 // canvas vivo (pintarVivo). Los cambios en la página pasan por el editor para
 // que se puedan deshacer.
 
-import { Captura, reconocerForma, tocaTrazo, cortarTrazo, esTachado } from "./ink.js";
+import { Captura, reconocerForma, tocaTrazo, cortarTrazo, esTachado, envolvente } from "./ink.js";
 import { MM, uid, cajaDe, unirCajas, cortan, transformar, matrizAlrededor, puntoEnPoligono, cajaPuntos } from "./model.js";
 import { pintarItem, altoTexto, fuenteCss } from "./render.js";
 import { store } from "./store.js";
@@ -54,12 +54,12 @@ class Escritura {
     this.it = {
       type: "stroke", tool: hl ? "highlighter" : "pen", pen: hl ? null : aj.tipo,
       color: aj.color, w: mm * MM, op: hl ? aj.opacidad : 1,
+      v: 2, min: hl ? 1 : aj.anchoMin,
     };
     this.cap = new Captura({
-      tipo: aj.tipo,
-      sensibilidad: hl ? 0 : aj.sensibilidad,
+      presion: hl ? 0 : aj.presion,
+      suavAncho: hl ? 0.5 : aj.suavAncho,
       suavizado: hl ? 0.4 : aj.suavizado,
-      retardo: hl ? 0 : aj.retardo,
     }, ed.escalaPantalla(c.i));
     this.cap.añadir(c.x, c.y, e.timeStamp);
     this.forma = null;
@@ -68,18 +68,36 @@ class Escritura {
     ed.pedirVivo();
   }
 
-  // lo que borraría el garabato de tachar: trazos con al menos un 30 % de sus
-  // puntos dentro de la caja del garabato
+  // lo que borraría el garabato de tachar: lo que cae DENTRO de la zona que
+  // cubre (su envolvente convexa, con un margen): trazos y formas con al
+  // menos un 35 % de sus puntos dentro, o con su centro dentro si son
+  // pequeños. Antes se miraba la caja del garabato y un 30 %: se dejaba
+  // cosas tachadas y a veces cogía de más (Juan, 15-oct)
   bajoTachado(pts) {
-    const caja = cajaPuntos(pts);
-    return this.ed.items(this.i).filter((o) => {
-      if (o.type !== "stroke" || !cortan(cajaDe(o), caja)) return false;
-      let n = 0, d = 0;
-      for (let k = 0; k < o.pts.length; k += 3) {
-        n++;
-        if (o.pts[k] >= caja.x && o.pts[k] <= caja.x + caja.w && o.pts[k + 1] >= caja.y && o.pts[k + 1] <= caja.y + caja.h) d++;
+    const zona = envolvente(pts);
+    const caja = cajaPuntos(pts, 2);
+    const margen = 2 + (this.it ? this.it.w : 1);
+    const dentro = (x, y) => {
+      if (puntoEnPoligono(x, y, zona)) return true;
+      for (let k = 0; k < zona.length; k += 2) {
+        const ax = zona[k], ay = zona[k + 1], bx = zona[(k + 2) % zona.length], by = zona[(k + 3) % zona.length];
+        const dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy;
+        const t = l ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l)) : 0;
+        if (Math.hypot(x - ax - t * dx, y - ay - t * dy) <= margen) return true;
       }
-      return d / n >= 0.3;
+      return false;
+    };
+    return this.ed.items(this.i).filter((o) => {
+      if (o.type !== "stroke" && o.type !== "shape") return false;
+      const b = cajaDe(o);
+      if (!cortan(b, caja)) return false;
+      const q = o.pts || null;
+      if (!q) return dentro(b.x + b.w / 2, b.y + b.h / 2);
+      // trazos pequeños (un punto, una tilde): basta con el centro
+      if (Math.max(b.w, b.h) < 6) return dentro(b.x + b.w / 2, b.y + b.h / 2);
+      let n = 0, d = 0;
+      for (let k = 0; k < q.length; k += 3) { n++; if (dentro(q[k], q[k + 1])) d++; }
+      return d / n >= 0.35;
     });
   }
 

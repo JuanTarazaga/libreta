@@ -409,23 +409,33 @@ export function pintarItem(ctx, it) {
 // Todas las capas visibles. El subrayador va DETRÁS de la tinta de su capa y
 // la cinta, delante de todo (es para tapar). `ocultos`: ids que no se pintan
 // (los que se están moviendo con el lazo, que van en la capa en vivo).
-export function pintarCapas(ctx, page, ocultos, region) {
+// El orden en que se pintan los elementos: subrayador debajo de la tinta de
+// su capa, cinta encima de todo (para tapar). También lo usa el editor para
+// pintar por tandas
+export function ordenItems(page, ocultos) {
+  const out = [];
   for (const capa of page.layers) {
     if (!capa.visible) continue;
-    const items = capa.items;
     for (let pasada = 0; pasada < 3; pasada++) {
-      for (const it of items) {
+      for (const it of capa.items) {
         if (ocultos && ocultos.has(it.id)) continue;
         const esSub = it.tool === "highlighter";
         const esCinta = it.type === "tape";
         if ((pasada === 0) !== esSub || (pasada === 2) !== esCinta) continue;
-        if (region) {
-          const b = cajaDe(it);
-          if (b && !(b.x < region.x + region.w && region.x < b.x + b.w && b.y < region.y + region.h && region.y < b.y + b.h)) continue;
-        }
-        pintarItem(ctx, it);
+        out.push(it);
       }
     }
+  }
+  return out;
+}
+
+export function pintarCapas(ctx, page, ocultos, region) {
+  for (const it of ordenItems(page, ocultos)) {
+    if (region) {
+      const b = cajaDe(it);
+      if (b && !(b.x < region.x + region.w && region.x < b.x + b.w && b.y < region.y + region.h && region.y < b.y + b.h)) continue;
+    }
+    pintarItem(ctx, it);
   }
 }
 

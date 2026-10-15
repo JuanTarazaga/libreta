@@ -15,7 +15,7 @@
 
 import { store } from "./store.js";
 import { el, icono, boton, aviso, cerrarEmergente } from "./ui.js";
-import { pintarPagina, pintarItem, alCargar, colorFondo, pintarPapel, pintarCapas } from "./render.js";
+import { pintarItem, alCargar, colorFondo, pintarPapel, pintarCapas, ordenItems } from "./render.js";
 import { HERRAMIENTAS_DEF, uid, esPalma } from "./model.js";
 import { db } from "./db.js";
 import { crearHerramientas } from "./herramientas.js";
@@ -26,6 +26,11 @@ const HUECO = 18;               // px entre páginas
 const ZOOM_MIN = 0.35, ZOOM_MAX = 6;   // relativos al ajuste al ancho
 const TIRAR_MIN = 70;           // px pasado el final para empezar a cargar una página
 const TIRAR_MS = 700;           // lo que tarda en llenarse el círculo
+// cuánto puede salirse la vista de las páginas (fracción de la pantalla)
+// antes de frenar: Juan, 15-oct, "siempre te auto mete dentro de la página si
+// te sales con la cámara… hasta que no te salgas mucho no lo hagas"
+const MARGEN_LIBRE = 0.45;
+const MARGEN_FINAL = 0.2;        // tras la última página, menos: ahí se "tira" para añadir otra
 
 export class Editor {
   constructor(cuaderno, ajustes, alSalir) {
@@ -59,6 +64,11 @@ export class Editor {
     // 15-oct: la goma por zonas pasa a ser la de serie (Juan: "borra todo
     // del tirón, no solo la zona que estés borrando")
     if (!this.herrAj.v2) { this.herrAj.eraser.modo = "partial"; this.herrAj.v2 = true; }
+    // ajustes de escritura viejos (sensibilidad/retardo) → los de Noteful
+    const pen = this.herrAj.pen;
+    if (pen.presion == null) pen.presion = pen.sensibilidad != null ? Math.min(1, pen.sensibilidad * 0.7) : 0.35;
+    if (pen.anchoMin == null) pen.anchoMin = 0.45;
+    if (pen.suavAncho == null) pen.suavAncho = 0.5;
     this.paginas = await store.paginas(this.n);
     this.n.opened = Date.now();
     store.guardarCuaderno(this.n, true);
@@ -251,19 +261,16 @@ export class Editor {
     this.aplicarTransform();
   }
 
-  // el desplazamiento dentro de lo que hay (con rebote para "tirar")
+  // el desplazamiento: libre hasta MARGEN_LIBRE fuera de las páginas, sin
+  // recolocar ni centrar nada (antes se ajustaba a la página todo el rato);
+  // `rebote`: lo que se deja pasar del final para "tirar" y añadir página
   limitar(rebote = 0) {
-    const maxX = Math.max(0, this.anchoTotal - this.vw);
-    const maxY = Math.max(0, this.altoTotal - this.vh);
-    if (this.horizontal()) {
-      this.sx = Math.max(-rebote, Math.min(maxX + rebote, this.sx));
-      this.sy = Math.max(0, Math.min(maxY, this.sy));
-      if (this.altoTotal < this.vh) this.sy = -(this.vh - this.altoTotal) / 2;
-    } else {
-      this.sx = Math.max(0, Math.min(maxX, this.sx));
-      if (this.anchoTotal <= this.vw) this.sx = 0;
-      this.sy = Math.max(-rebote, Math.min(maxY + rebote, this.sy));
-    }
+    const mx = this.vw * MARGEN_LIBRE, my = this.vh * MARGEN_LIBRE;
+    const finX = this.anchoTotal - this.vw, finY = this.altoTotal - this.vh;
+    const h = this.horizontal();
+    const fx = h ? this.vw * MARGEN_FINAL : mx, fy = h ? my : this.vh * MARGEN_FINAL;
+    this.sx = Math.max(Math.min(0, finX) - mx, Math.min(Math.max(0, finX) + fx + (h ? rebote : 0), this.sx));
+    this.sy = Math.max(Math.min(0, finY) - my, Math.min(Math.max(0, finY) + fy + (h ? 0 : rebote), this.sy));
   }
 
   // pantalla = posición de disposición × s + t. Sin zoom en curso, s = 1 y
@@ -391,28 +398,54 @@ export class Editor {
   }
   pedirVivo() { this.vivoSucio = true; this.pedir(); }
 
+  // POR TANDAS: una página de Noteful con 2.400 trazos tarda en pintarse; de
+  // golpe congelaba el movimiento con dos dedos ("va como a tirones"). Cada
+  // fotograma pinta lo que quepa en su presupuesto (menos mientras hay gesto)
   fotograma() {
-    // como mucho dos páginas por fotograma: no bloquear la escritura
-    let n = 0;
     const t0 = performance.now();
-    for (const i of [...this.sucias]) {
-      if (n >= 2 && performance.now() - t0 > 12) break;
-      this.sucias.delete(i);
-      this.pintarVista(i);
-      n++;
-    }
+    const presupuesto = this.gesto ? 7 : 14;
     if (this.vivoSucio) { this.vivoSucio = false; this.pintarVivo(); }
-    if (this.sucias.size) this.pedir();
+    for (const i of [...this.sucias]) {
+      this.sucias.delete(i);
+      this.empezarVista(i);
+      if (performance.now() - t0 > presupuesto) break;
+    }
+    let quedan = false;
+    for (const [i, v] of this.vistas) {
+      if (!v.pend) continue;
+      if (performance.now() - t0 > presupuesto) { quedan = true; break; }
+      this.seguirVista(i, v, t0 + presupuesto);
+      if (v.pend) quedan = true;
+    }
+    if (this.sucias.size || quedan) this.pedir();
   }
 
-  pintarVista(i) {
+  empezarVista(i) {
     const v = this.vistas.get(i);
     if (!v) return;
     const ctx = v.cv.getContext("2d");
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, v.cv.width, v.cv.height);
     ctx.setTransform(v.k, 0, 0, v.k, 0, 0);
-    pintarPagina(ctx, this.paginas[i], v.k, this.ocultos && this.ocultos.i === i ? this.ocultos.ids : null);
+    pintarPapel(ctx, this.paginas[i], v.k);
+    v.pend = { lista: ordenItems(this.paginas[i], this.ocultos && this.ocultos.i === i ? this.ocultos.ids : null), k: 0 };
+  }
+
+  seguirVista(i, v, limite) {
+    const ctx = v.cv.getContext("2d");
+    ctx.setTransform(v.k, 0, 0, v.k, 0, 0);
+    const p = v.pend;
+    while (p.k < p.lista.length) {
+      pintarItem(ctx, p.lista[p.k++]);
+      if ((p.k & 15) === 0 && performance.now() > limite) return;
+    }
+    v.pend = null;
+  }
+
+  pintarVista(i) {
+    this.empezarVista(i);
+    const v = this.vistas.get(i);
+    if (v) this.seguirVista(i, v, Infinity);
   }
 
   // pinta un elemento nuevo encima sin repintar la página entera
@@ -420,6 +453,8 @@ export class Editor {
     const v = this.vistas.get(i);
     if (!v) return;
     if (it.tool === "highlighter" || it.type === "tape") { this.redibujar(i); return; }
+    // la página aún pintándose por tandas: va al final de su lista
+    if (v.pend) { v.pend.lista.push(it); return; }
     const ctx = v.cv.getContext("2d");
     ctx.setTransform(v.k, 0, 0, v.k, 0, 0);
     pintarItem(ctx, it);
@@ -655,7 +690,11 @@ export class Editor {
       else this.herr.move && this.herr.move(e, p);
       return;
     }
-    if (this.modo === "gesto" || this.modo === "mano") this.moverGesto();
+    // una vez por fotograma, con todos los dedos ya al día: cada dedo manda
+    // su propio evento y recalcular con cada uno hacía dar saltos al gesto
+    if ((this.modo === "gesto" || this.modo === "mano") && !this._rafG) {
+      this._rafG = requestAnimationFrame(() => { this._rafG = 0; this.moverGesto(); });
+    }
   }
 
   pUp(e, cancelado) {
@@ -670,6 +709,7 @@ export class Editor {
       return;
     }
     if (this.modo === "gesto" || this.modo === "mano") {
+      if (this._rafG) { cancelAnimationFrame(this._rafG); this._rafG = 0; this.punteros.set(p.id, p); this.moverGesto(); this.punteros.delete(p.id); }
       this.gestoUp(p);
       if (!this.punteros.size) this.terminarGesto();
       else this.empezarGesto();
@@ -797,7 +837,9 @@ export class Editor {
     const g = this.gesto;
     if (!g || !this.ajustes.tirarParaPagina) return;
     const maxY = Math.max(0, this.altoTotal - this.vh), maxX = Math.max(0, this.anchoTotal - this.vw);
-    const pasado = this.horizontal() ? this.sx - maxX : this.sy - maxY;
+    // pasado el final MÁS el margen libre: si no, cualquier vistazo al final
+    // empezaría a cargar una página
+    const pasado = this.horizontal() ? this.sx - maxX - this.vw * MARGEN_FINAL : this.sy - maxY - this.vh * MARGEN_FINAL;
     if (!this.tirarEl) {
       this.tirarEl = el("div", { class: "tirar" }, [el("div", { class: "tirar-anillo" }), el("span", {}, "")]);
       this.vista.append(this.tirarEl);

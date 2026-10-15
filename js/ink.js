@@ -24,12 +24,17 @@ export class Captura {
     this.ultimoT = 0;
   }
 
+  // Los cuatro ajustes de escritura de Noteful (Juan, 15-oct: "presión de
+  // escritura, ancho mínimo, suavizado de ancho, suavizado de movimiento,
+  // no hacen falta más"):
+  //   presion    cuánto adelgaza el trazo rápido (0 = grosor fijo)
+  //   suavAncho  lo despacio que cambia el grosor de punto a punto
+  //   suavizado  suavizado del movimiento (media exponencial de la posición)
+  //   (el ancho mínimo se aplica al pintar: radios(), campo `min` del trazo)
   añadir(x, y, t) {
     this.crudos.push(x, y, t);
     const a = this.a;
-    // suavizado del movimiento: media exponencial. El retardo la hace más
-    // lenta todavía (estabilizador): el trazo "persigue" al lápiz.
-    const k = 1 - Math.min(0.92, a.suavizado * 0.55 + a.retardo * 0.37);
+    const k = 1 - Math.min(0.9, (a.suavizado || 0) * 0.8);
     if (this.sx === null) { this.sx = x; this.sy = y; }
     else { this.sx += (x - this.sx) * k; this.sy += (y - this.sy) * k; }
 
@@ -42,9 +47,9 @@ export class Captura {
       if (d < 0.8) return false;
       const dt = Math.max(1, t - this.ultimoT);
       const v = d / dt;                                      // px por ms
-      // 0,15 px/ms ≈ escribir despacio; 2,5 px/ms ≈ trazo rápido
-      const objetivo = 1.15 - Math.min(1, Math.max(0, (v - 0.15) / 2.35)) * 0.85 * a.sensibilidad * 1.4;
-      p += (Math.max(0.3, objetivo) - p) * 0.35;
+      // 0,15 px/ms ≈ escribir despacio (p = 1); 2,5 px/ms ≈ trazo rápido
+      const objetivo = 1 - (a.presion || 0) * Math.min(1, Math.max(0, (v - 0.15) / 2.35));
+      p += (objetivo - p) * (1 - 0.92 * (a.suavAncho != null ? a.suavAncho : 0.5));
     }
     this.p = p;
     this.ultimoT = t;
@@ -107,10 +112,19 @@ export function radios(it, pts) {
     largoTotal += Math.hypot(pts[i * 3] - pts[i * 3 - 3], pts[i * 3 + 1] - pts[i * 3 - 2]);
     acum[i] = largoTotal;
   }
+  // trazos nuevos (v2): p en [0, 1] y el ancho mínimo del trazo
+  const v2 = it.v === 2, min = it.min != null ? it.min : 0.5;
   for (let i = 0; i < n; i++) {
     const p = pts[i * 3 + 2];
     let w;
-    if (tipo === "fountain") {
+    if (v2 && tipo !== "nf") {
+      const f = min + (1 - min) * Math.max(0, Math.min(1, p));
+      if (tipo === "fountain") {
+        const j = Math.min(n - 1, i + 1), k = Math.max(0, i - 1);
+        const ang = Math.atan2(pts[j * 3 + 1] - pts[k * 3 + 1], pts[j * 3] - pts[k * 3]);
+        w = base * (0.35 + 0.65 * Math.abs(Math.sin(ang - Math.PI / 4))) * f;
+      } else w = base * f;
+    } else if (tipo === "fountain") {
       // plumilla a 45º: más ancho al bajar en diagonal, fino en la otra
       const j = Math.min(n - 1, i + 1), k = Math.max(0, i - 1);
       const ang = Math.atan2(pts[j * 3 + 1] - pts[k * 3 + 1], pts[j * 3] - pts[k * 3]);
@@ -440,18 +454,68 @@ export function reconocerForma(pts) {
   return null;
 }
 
-// ¿el trazo es un garabato de tachar? (muchas idas y vueltas en poco espacio)
+// ¿el trazo es un garabato de tachar? Idas y vueltas a lo largo de su eje
+// principal (en cualquier dirección: horizontal, vertical, en diagonal).
+// Antes sólo contaba los cambios de sentido en horizontal y con 5 o más:
+// muchos garabatos no se reconocían (Juan, 15-oct)
 export function esTachado(pts) {
   const n = pts.length / 3;
-  if (n < 12) return false;
-  let giros = 0, prev = 0, largo = 0;
-  for (let i = 2; i < n; i++) {
-    const dx1 = pts[(i - 1) * 3] - pts[(i - 2) * 3], dx2 = pts[i * 3] - pts[(i - 1) * 3];
-    largo += Math.hypot(dx2, pts[i * 3 + 1] - pts[(i - 1) * 3 + 1]);
-    const sgn = Math.sign(dx2);
-    if (sgn && prev && sgn !== prev && Math.abs(dx1) + Math.abs(dx2) > 0.5) giros++;
-    if (sgn) prev = sgn;
+  if (n < 10) return false;
+  let cx = 0, cy = 0;
+  for (let i = 0; i < n; i++) { cx += pts[i * 3]; cy += pts[i * 3 + 1]; }
+  cx /= n; cy /= n;
+  let sxx = 0, syy = 0, sxy = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = pts[i * 3] - cx, dy = pts[i * 3 + 1] - cy;
+    sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
   }
-  const caja = cajaPuntos(pts);
-  return giros >= 5 && largo > caja.w * 3.5;
+  const ang = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+  const ux = Math.cos(ang), uy = Math.sin(ang);
+  let largo = 0;
+  for (let i = 1; i < n; i++) largo += Math.hypot(pts[i * 3] - pts[i * 3 - 3], pts[i * 3 + 1] - pts[i * 3 - 2]);
+  // idas y vueltas a lo largo de un eje (con histéresis: un temblor no cuenta)
+  const vueltas = (ex, ey) => {
+    const q = [];
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < n; i++) {
+      const v = (pts[i * 3] - cx) * ex + (pts[i * 3 + 1] - cy) * ey;
+      q.push(v); lo = Math.min(lo, v); hi = Math.max(hi, v);
+    }
+    const ext = hi - lo;
+    if (ext < 4) return { giros: 0, ext };
+    const h = Math.max(1.5, ext * 0.3);
+    // dir 0: aún sin sentido (se siguen máximo y mínimo a la vez, sin mezclar)
+    let giros = 0, dir = 0, maxv = q[0], minv = q[0];
+    for (const v of q) {
+      if (dir === 0) {
+        if (v > maxv) maxv = v;
+        if (v < minv) minv = v;
+        if (maxv - v > h) { dir = -1; minv = v; } else if (v - minv > h) { dir = 1; maxv = v; }
+      } else if (dir === 1) {
+        if (v > maxv) maxv = v;
+        else if (maxv - v > h) { giros++; dir = -1; minv = v; }
+      } else {
+        if (v < minv) minv = v;
+        else if (v - minv > h) { giros++; dir = 1; maxv = v; }
+      }
+    }
+    return { giros, ext };
+  };
+  // a lo largo (ir y volver encima) o de través (sierra mientras avanza)
+  const largoEje = vueltas(ux, uy), traves = vueltas(-uy, ux);
+  return (largoEje.giros >= 3 && largo > largoEje.ext * 2.4) || (traves.giros >= 4 && largo > traves.ext * 4 && largo > largoEje.ext * 2.2);
+}
+
+// envolvente convexa de los puntos [x, y, p, ...] → [x, y, x, y, ...]
+export function envolvente(pts) {
+  const P = [];
+  for (let i = 0; i < pts.length; i += 3) P.push([pts[i], pts[i + 1]]);
+  P.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (P.length < 3) return P.flat();
+  const cruz = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const abajo = [], arriba = [];
+  for (const p of P) { while (abajo.length >= 2 && cruz(abajo[abajo.length - 2], abajo[abajo.length - 1], p) <= 0) abajo.pop(); abajo.push(p); }
+  for (let i = P.length - 1; i >= 0; i--) { const p = P[i]; while (arriba.length >= 2 && cruz(arriba[arriba.length - 2], arriba[arriba.length - 1], p) <= 0) arriba.pop(); arriba.push(p); }
+  abajo.pop(); arriba.pop();
+  return abajo.concat(arriba).flat();
 }

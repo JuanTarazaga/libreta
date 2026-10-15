@@ -69,17 +69,18 @@ export const ajustesDe = {
       filaGrosores(ed, aj, 0.1, 5, () => cambiado(ed)),
       filaColores(ed, aj, ed.herrAj.colores, () => cambiado(ed)),
       el("div", { class: "pop-sep" }),
-      deslizador("Sensitivity", aj.sensibilidad, 0, 1, 0.05, (v) => { aj.sensibilidad = v; cambiado(ed); }, (v) => Math.round(v * 100) + "%"),
+      deslizador("Writing pressure", aj.presion, 0, 1, 0.05, (v) => { aj.presion = v; cambiado(ed); }, (v) => Math.round(v * 100) + "%"),
+      deslizador("Minimum width", aj.anchoMin, 0.1, 1, 0.05, (v) => { aj.anchoMin = v; cambiado(ed); }, (v) => Math.round(v * 100) + "%"),
+      deslizador("Width smoothing", aj.suavAncho, 0, 1, 0.05, (v) => { aj.suavAncho = v; cambiado(ed); }, (v) => Math.round(v * 100) + "%"),
       deslizador("Motion smoothing", aj.suavizado, 0, 1, 0.05, (v) => { aj.suavizado = v; cambiado(ed); }, (v) => Math.round(v * 100) + "%"),
-      deslizador("Stroke delay", aj.retardo, 0, 1, 0.05, (v) => { aj.retardo = v; cambiado(ed); }, (v) => Math.round(v * 100) + "%"),
+      el("div", { class: "pop-sep" }),
       interruptor("Hold to create shapes", aj.formaAlMantener, (v) => { aj.formaAlMantener = v; cambiado(ed); }),
-      deslizador("Shape delay", aj.retardoForma, 0.3, 1.5, 0.05, (v) => { aj.retardoForma = v; cambiado(ed); }, (v) => v.toFixed(2) + " s"),
       interruptor("Scribble to erase", aj.tachadoBorra, (v) => { aj.tachadoBorra = v; cambiado(ed); }),
       el("div", { class: "pop-pie" }, [
         el("button", { class: "dbtn", onclick: () => { guardarPreset(ed, "pen"); } }, "Save as favorite"),
         el("button", { class: "dbtn", onclick: () => {
           const d = HERRAMIENTAS_DEF.pen;
-          Object.assign(aj, { sensibilidad: d.sensibilidad, suavizado: d.suavizado, retardo: d.retardo, formaAlMantener: d.formaAlMantener, retardoForma: d.retardoForma });
+          Object.assign(aj, { presion: d.presion, anchoMin: d.anchoMin, suavAncho: d.suavAncho, suavizado: d.suavizado });
           cambiado(ed); pintar();
         } }, "Reset"),
       ]),

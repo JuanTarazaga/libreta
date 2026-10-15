@@ -89,9 +89,11 @@ export const HERRAMIENTAS_DEF = {
     color: "#1d4ed8",
     grosores: GROSORES_PLUMA.slice(),
     gi: 1,                       // índice del grosor elegido
-    sensibilidad: 0.5,           // 0..1: cuánto cambia el grosor con la velocidad
-    suavizado: 0.5,              // 0..1: suavizado del movimiento
-    retardo: 0.0,                // 0..1: retardo del trazo (estabilizador)
+    // los cuatro ajustes de escritura de Noteful (Juan, 15-oct)
+    presion: 0.35,               // 0..1 presión: cuánto adelgaza el trazo rápido
+    anchoMin: 0.45,              // 0..1 ancho mínimo, fracción del grosor elegido
+    suavAncho: 0.5,              // 0..1 suavizado del ancho
+    suavizado: 0.5,              // 0..1 suavizado del movimiento
     formaAlMantener: true,
     retardoForma: 0.6,           // s quieto para convertir en forma
     tachadoBorra: false,         // garabatear encima borra
