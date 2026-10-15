@@ -25,9 +25,8 @@ export class Captura {
     this.ultimoT = 0;
   }
 
-  // Los cuatro ajustes de escritura de Noteful (Juan, 15-oct: "presión de
-  // escritura, ancho mínimo, suavizado de ancho, suavizado de movimiento,
-  // no hacen falta más"):
+  // Los cuatro ajustes de escritura de Noteful (presión de escritura, ancho
+  // mínimo, suavizado de ancho y suavizado de movimiento):
   //   presion    cuánto adelgaza el trazo rápido (0 = grosor fijo)
   //   suavAncho  lo despacio que cambia el grosor de punto a punto
   //   suavizado  suavizado del movimiento (media exponencial de la posición)
@@ -45,7 +44,7 @@ export class Captura {
       const dx = this.sx - this.pts[n - 3], dy = this.sy - this.pts[n - 2];
       const d = Math.hypot(dx, dy) * this.escala;           // en px de pantalla
       // distancia mínima entre puntos: Noteful guarda uno cada ~0,5 pt (medido
-      // en el archivo de Juan); descartar más quitaba detalle a la letra
+      // en un archivo real); descartar más quitaba detalle a la letra
       if (d < 0.5) return false;
       const dt = Math.max(1, t - this.ultimoT);
       const v = d / dt;                                      // px por ms
@@ -78,8 +77,8 @@ export class Captura {
 // ── geometría del trazo ──────────────────────────────────────────────────────
 // Densifica con curvas cuadráticas por los puntos medios: el trazo sale curvo
 // aunque la entrada llegue a saltos (60 Hz en el iPad Air 2), y suaviza el
-// temblor del lápiz capacitivo. (El 15-oct se probó una curva que pasaba por
-// cada punto: marcaba cada temblor y Juan dijo "te has cargado la escritura")
+// temblor del lápiz capacitivo. (Una curva que pasa por cada punto marca cada
+// temblor: se probó y la letra salía peor)
 //
 // `seguirDensificando` hace lo mismo poco a poco, para el trazo en vivo: el
 // tramo del punto i es definitivo cuando ya existe el i+1. `e` guarda por
@@ -528,7 +527,7 @@ export function reconocerForma(pts) {
 // ¿el trazo es un garabato de tachar? Idas y vueltas a lo largo de su eje
 // principal (en cualquier dirección: horizontal, vertical, en diagonal).
 // Antes sólo contaba los cambios de sentido en horizontal y con 5 o más:
-// muchos garabatos no se reconocían (Juan, 15-oct)
+// muchos garabatos no se reconocían
 export function esTachado(pts) {
   const n = pts.length / 3;
   if (n < 10) return false;
@@ -546,8 +545,8 @@ export function esTachado(pts) {
   for (let i = 1; i < n; i++) largo += Math.hypot(pts[i * 3] - pts[i * 3 - 3], pts[i * 3 + 1] - pts[i * 3 - 2]);
   // idas y vueltas a lo largo de un eje (con histéresis: un temblor no cuenta)
   // y cuántas son EN PICO. Al tachar casi todas las vueltas son en pico; una
-  // "m" o una "n" escritas de un trazo tienen la mitad en arco (Juan, 15-oct:
-  // "se borran las cosas mientras escribo": una "m" contaba como garabato)
+  // "m" o una "n" escritas de un trazo tienen la mitad en arco (antes una "m"
+  // contaba como garabato y borraba lo que tocaba al escribir)
   const vueltas = (ex, ey) => {
     const q = [], o = [];
     let lo = Infinity, hi = -Infinity;

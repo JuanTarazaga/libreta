@@ -201,7 +201,7 @@ class Store {
 
   // marca una página como cambiada: se guarda a los 2 s sin cambios y nunca
   // con el lápiz en la pantalla (guardar una página de miles de trazos
-  // cuesta: a mitad de una palabra se notaba un tirón; Juan, 15-oct)
+  // cuesta: a mitad de una palabra se notaba un tirón)
   tocar(page) {
     page.updated = Date.now();
     this.sucias.add(page.id);

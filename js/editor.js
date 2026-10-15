@@ -31,8 +31,8 @@ const ZOOM_MIN = 0.35, ZOOM_MAX = 6;   // relativos al ajuste al ancho
 const TIRAR_MIN = 70;           // px pasado el final para empezar a cargar una página
 const TIRAR_MS = 700;           // lo que tarda en llenarse el círculo
 // cuánto puede salirse la vista de las páginas (fracción de la pantalla)
-// antes de frenar: Juan, 15-oct, "siempre te auto mete dentro de la página si
-// te sales con la cámara… hasta que no te salgas mucho no lo hagas"
+// antes de frenar (recolocar la vista en cuanto se salía un poco de la página
+// hacía que la cámara se ajustara todo el rato)
 const MARGEN_LIBRE = 0.45;
 const MARGEN_FINAL = 0.2;        // tras la última página, menos: ahí se "tira" para añadir otra
 
@@ -65,8 +65,8 @@ export class Editor {
         this.herrAj[k] = Object.assign({}, HERRAMIENTAS_DEF[k], this.herrAj[k]);
       }
     }
-    // 15-oct: la goma por zonas pasa a ser la de serie (Juan: "borra todo
-    // del tirón, no solo la zona que estés borrando")
+    // la goma por zonas pasa a ser la de serie (la de trazos enteros borraba
+    // más de lo que se tocaba)
     if (!this.herrAj.v2) { this.herrAj.eraser.modo = "partial"; this.herrAj.v2 = true; }
     // ajustes de escritura viejos (sensibilidad/retardo) → los de Noteful
     const pen = this.herrAj.pen;
@@ -102,8 +102,8 @@ export class Editor {
     this.contenido = el("div", { class: "contenido" });
     this.vivoCv = el("canvas", { class: "vivo" });
     // capa de DETALLE: lo que se ve, a la resolución de la pantalla, cuando el
-    // zoom pasa del tope de píxeles del canvas de página (Juan, 15-oct: "la
-    // resolución no me convence"). Se pinta al quedarse quieta la vista y va
+    // zoom pasa del tope de píxeles del canvas de página (si no, la letra se
+    // ve borrosa con zoom). Se pinta al quedarse quieta la vista y va
     // dentro del contenido, para moverse con él
     this.detalleCv = el("canvas", { class: "detalle" });
     this.vivo = this.vivoCv.getContext("2d");
@@ -340,8 +340,8 @@ export class Editor {
   }
 
   // sólo coloca. El canvas que se ve NO se redimensiona aquí: eso lo borraba
-  // y la página parpadeaba en blanco hasta repintarse (Juan, 15-oct: "parpadea
-  // cuando te mueves"). Si hace falta otra resolución, se pinta uno nuevo
+  // y la página parpadeaba en blanco hasta repintarse. Si hace falta otra
+  // resolución, se pinta uno nuevo
   // aparte y se cambia por el viejo al terminar
   colocarVista(i, v) {
     const l = this.lay[i], p = this.paginas[i];
@@ -812,14 +812,13 @@ export class Editor {
     // los toques IGNORADOS (la mano o un dedo apoyado mientras se escribe) no
     // cuentan hasta que se levantan. Antes, con la mano apoyada, el siguiente
     // toque del lápiz contaba como "dos dedos": movía la página y, si era un
-    // punto o una tilde, hacía DESHACER (Juan, 15-oct: "se borran las cosas
-    // mientras escribo")
+    // punto o una tilde, hacía DESHACER (se borraban cosas al escribir)
     const n = this.dedos().length;
 
     if (this.modo === "dibujo") {
       // ¿segundo toque poco después del primero y sin apenas trazo? Puede ser
-      // un gesto de dos dedos (Juan, 15-oct: "con los dos dedos genera muchas
-      // falsas escrituras y se pone a hacer líneas") o la mano que se apoya.
+      // un gesto de dos dedos (si no, el primer dedo dejaba líneas falsas al
+      // moverse con dos) o la mano que se apoya.
       // Se decide por lo que hace: si se MUEVE, es un gesto (fuera la línea);
       // si se queda quieto mientras el lápiz sigue, es la mano
       const primero = this.punteroDibujo;
@@ -959,8 +958,8 @@ export class Editor {
     }
   }
 
-  // GESTOS (reescrito el 15-oct, Juan: "el movimiento con los dedos es
-  // ortopédico, se va hacia donde quiere"). Antes el desplazamiento se
+  // GESTOS (reescrito: el movimiento con los dedos se iba hacia donde quería).
+  // Antes el desplazamiento se
   // aplicaba por dentro del zoom (se multiplicaba por él) y al entrar o salir
   // un dedo se recolocaban las páginas en mitad del gesto. Ahora: el punto de
   // la página que estaba bajo los dedos al empezar sigue bajo los dedos
@@ -1046,7 +1045,7 @@ export class Editor {
     const g = this.gesto;
     if (!g) return;
     // toques con 2 o 3 dedos sin mover: deshacer / rehacer (nada de doble
-    // toque: Juan, 15-oct, "solo moviendo los dedos hacia dentro y fuera")
+    // toque: el zoom sólo se hace pellizcando)
     // y los dedos tienen que llegar casi a la vez: un dedo apoyado más un
     // toque del lápiz no es un "toque con dos dedos"
     const dur = performance.now() - g.t0;
@@ -1087,9 +1086,8 @@ export class Editor {
     this.aplicarTransform();
   }
 
-  // TIRAR AL FINAL PARA AÑADIR PÁGINA (Juan, 15-oct: "que tengas que esperar
-  // a que un icono de cargando termine, como en Noteful, porque sino abres
-  // infinitas páginas"). Pasado el final más de TIRAR_MIN px, un círculo se
+  // TIRAR AL FINAL PARA AÑADIR PÁGINA (como en Noteful: hay que esperar a que
+  // un icono de carga termine; si no, se abren páginas sin fin). Pasado el final más de TIRAR_MIN px, un círculo se
   // va llenando mientras se mantiene; lleno, una página y sólo una por gesto.
   tirar() {
     const g = this.gesto;

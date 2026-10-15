@@ -277,8 +277,8 @@ export class Biblioteca {
     const r = this.aj.rapido;
     const d = new Date();
     const titulo = `Note ${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-    // con PLANTILLA propia (Juan, 15-oct: "elegir el archivo que quieres como
-    // creación de notebook rápido"): el cuaderno sale con las páginas de ese
+    // con PLANTILLA propia (un archivo elegido para la creación rápida): el
+    // cuaderno sale con las páginas de ese
     // archivo de fondo, y las nuevas siguen con la plantilla
     if (r.plantilla) {
       const pl = r.plantilla;
@@ -447,8 +447,8 @@ export class Biblioteca {
   }
 
   // ── prueba del lápiz: qué le llega a la app de cada toque y calibrar el
-  // rechazo de palma a SU lápiz (Juan, 15-oct: "no me deja escribir con mi
-  // lápiz inteligente")
+  // rechazo de palma a cada lápiz (con umbrales fijos, algunos lápices
+  // capacitivos se tomaban por la palma y no escribían)
   pruebaLapiz() {
     const aj = this.aj;
     const info = el("div", { class: "lapiz-info" }, "Write in the box with your stylus. Then rest your palm on it.");
@@ -462,8 +462,8 @@ export class Biblioteca {
     };
     // MEDIDAS del lápiz en este iPad, para afinar la escritura con datos y no
     // a ojo: puntos por segundo, temblor con el lápiz quieto y fotogramas
-    // lentos. El suavizado recomendado sale de una simulación con la letra de
-    // Juan (15-oct): sin temblor, lo mejor es no suavizar; con 1 px, un 50 %
+    // lentos. El suavizado recomendado sale de una simulación con letra real:
+    // sin temblor, lo mejor es no suavizar; con 1 px, un 50 %
     const medidas = el("div", { class: "lapiz-medidas" }, "Hold the stylus still for 1 second in the box to measure its jitter.");
     const M = { dts: [], ult: 0, quieto: [], temblor: null, frames: [], rafUlt: 0, escribiendo: false, recomendado: null };
     const bucle = (t) => {
@@ -613,7 +613,7 @@ export class Biblioteca {
 }
 
 // suavizado de movimiento recomendado según el temblor del lápiz (px), de la
-// simulación con la letra de Juan: 0,25 px → 0 · 0,5 → 10 % · 0,75 → 30 % ·
+// simulación con letra real: 0,25 px → 0 · 0,5 → 10 % · 0,75 → 30 % ·
 // 1 → 50 % · 1,5 o más → 60 %
 export function suavizadoPara(t) {
   const tabla = [[0.25, 0], [0.5, 0.1], [0.75, 0.3], [1, 0.5], [1.5, 0.6]];

@@ -91,9 +91,9 @@ export const HERRAMIENTAS_DEF = {
     color: "#1d4ed8",
     grosores: GROSORES_PLUMA.slice(),
     gi: 1,                       // índice del grosor elegido
-    // los cuatro ajustes de escritura de Noteful (Juan, 15-oct)
-    // de serie, como Noteful con un lápiz capacitivo (medido en el archivo de
-    // Juan): grosor casi fijo, sólo un 10 % más fino en los tramos rápidos,
+    // los cuatro ajustes de escritura de Noteful
+    // de serie, como Noteful con un lápiz capacitivo (medido en un archivo
+    // real): grosor casi fijo, sólo un 10 % más fino en los tramos rápidos,
     // y poco suavizado (conserva el detalle de la letra)
     presion: 0.1,                // 0..1 presión: cuánto adelgaza el trazo rápido
     anchoMin: 0.85,              // 0..1 ancho mínimo, fracción del grosor elegido
@@ -302,7 +302,7 @@ export function fecha(t) {
 // ¿Este toque es la palma? (editor y prueba del lápiz deciden igual)
 // Calibrado con SU lápiz (Ajustes → Stylus test): palma = bastante más grande
 // que la punta. Sin calibrar, umbrales generosos: con 38-70 px el lápiz
-// capacitivo de Juan se tomaba por la palma y no escribía (15-oct). iOS da el
+// capacitivo se tomaba por la palma y no escribía. iOS da el
 // contacto en width/height (px CSS, a saltos): un dedo o una punta de goma
 // suele quedar en 20-90; una palma apoyada, 120 o más.
 export function esPalma(ajustes, e) {

@@ -73,7 +73,7 @@ class Escritura {
   // cubre (su envolvente convexa, con un margen): trazos y formas con al
   // menos un 35 % de sus puntos dentro, o con su centro dentro si son
   // pequeños. Antes se miraba la caja del garabato y un 30 %: se dejaba
-  // cosas tachadas y a veces cogía de más (Juan, 15-oct)
+  // cosas tachadas y a veces cogía de más
   bajoTachado(pts) {
     const zona = envolvente(pts);
     const caja = cajaPuntos(pts, 2);
@@ -103,8 +103,8 @@ class Escritura {
     });
   }
 
-  // quieto un momento: si es un garabato de tachar, borra YA (Juan, 15-oct:
-  // "cuando lo dejes un poco se quite, porque sino no sabes si se quitará");
+  // quieto un momento: si es un garabato de tachar, borra YA (así se ve
+  // cuándo se borra, sin tener que soltar);
   // si no, la forma reconocida
   armarForma(p) {
     clearTimeout(this.tForma);

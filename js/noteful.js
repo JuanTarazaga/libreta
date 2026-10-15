@@ -1,5 +1,5 @@
 // IMPORTAR .noteful (el formato nativo de Noteful). No está documentado: esto
-// sale de leer un archivo real de Juan (R.O.noteful, 15-10-2026, 3 páginas,
+// sale de leer un archivo real (R.O.noteful, 15-10-2026, 3 páginas,
 // 6.352 trazos, 16 imágenes). Lo que se sabe:
 //
 // ARCHIVO
@@ -27,7 +27,7 @@
 //   Detrás, [3] ids borrados (se ignoran) y [5] objetos de la página
 //   (imágenes = tipo 1, trazados = tipo 20, formas = 6) con su marco
 //   [x, y, ancho, alto, giro], donde (x, y) es el CENTRO (comprobado contra la
-//   portada: tomarlo como esquina movía todo medio objeto; Juan, 15-10-2026).
+//   portada: tomarlo como esquina movía todo medio objeto).
 //   Los puntos de un trazado van desde la esquina superior izquierda.
 //
 // UNIDADES: 1 unidad de Noteful = 6/11 de punto (un A4 mide 1091,34 de ancho).
