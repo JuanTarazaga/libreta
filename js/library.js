@@ -460,6 +460,41 @@ export class Biblioteca {
       cv.width = r.width * d; cv.height = r.height * d;
       ctx = cv.getContext("2d"); ctx.scale(d, d);
     };
+    // MEDIDAS del lápiz en este iPad, para afinar la escritura con datos y no
+    // a ojo: puntos por segundo, temblor con el lápiz quieto y fotogramas
+    // lentos. El suavizado recomendado sale de una simulación con la letra de
+    // Juan (15-oct): sin temblor, lo mejor es no suavizar; con 1 px, un 50 %
+    const medidas = el("div", { class: "lapiz-medidas" }, "Hold the stylus still for 1 second in the box to measure its jitter.");
+    const M = { dts: [], ult: 0, quieto: [], temblor: null, frames: [], rafUlt: 0, escribiendo: false, recomendado: null };
+    const bucle = (t) => {
+      if (!M.escribiendo) { M.rafUlt = 0; return; }
+      if (M.rafUlt) M.frames.push(t - M.rafUlt);
+      M.rafUlt = t;
+      requestAnimationFrame(bucle);
+    };
+    const medirQuieto = (t) => {
+      const q = M.quieto;
+      while (q.length > 1 && t - q[0][2] > 1200) q.shift();
+      if (!q.length || t - q[0][2] < 1000) return;
+      let mx = 0, my = 0;
+      for (const [x, y] of q) { mx += x; my += y; }
+      mx /= q.length; my /= q.length;
+      let v = 0, lejos = 0;
+      for (const [x, y] of q) { const d = Math.hypot(x - mx, y - my); v += d * d; lejos = Math.max(lejos, d); }
+      if (lejos > 5) return;                      // se ha movido: no estaba quieto
+      M.temblor = Math.sqrt(v / q.length / 2);    // desviación por eje, en px
+      M.recomendado = suavizadoPara(M.temblor);
+    };
+    const pintarMedidas = () => {
+      const orden = M.dts.slice().sort((a, b) => a - b);
+      const hz = orden.length >= 20 ? Math.round(1000 / orden[orden.length >> 1]) : null;
+      const lentos = M.frames.length >= 30 ? Math.round((M.frames.filter((f) => f > 20).length / M.frames.length) * 100) : null;
+      medidas.textContent = [
+        hz ? `${hz} points/s` : "write a few words…",
+        M.temblor != null ? `jitter ${M.temblor.toFixed(2)} px → recommended motion smoothing ${Math.round(M.recomendado * 100)}%` : "hold the stylus still 1 s to measure jitter",
+        lentos != null ? `slow frames ${lentos}%` : null,
+      ].filter(Boolean).join(" · ");
+    };
     const toque = (e) => {
       e.preventDefault();
       if (!ctx) ajustar();
@@ -473,14 +508,41 @@ export class Biblioteca {
         (palma ? "REJECTED as palm" : "draws ✓");
       info.className = "lapiz-info " + (palma ? "mal" : "bien");
     };
-    cv.addEventListener("pointerdown", (e) => { cv.setPointerCapture(e.pointerId); toque(e); });
-    cv.addEventListener("pointermove", (e) => { if (e.buttons || e.pointerType === "touch") toque(e); });
+    cv.addEventListener("pointerdown", (e) => {
+      cv.setPointerCapture(e.pointerId); toque(e);
+      if (esPalma(aj, e)) return;
+      M.ult = e.timeStamp; M.quieto = [[e.clientX, e.clientY, e.timeStamp]];
+      if (!M.escribiendo) { M.escribiendo = true; requestAnimationFrame(bucle); }
+    });
+    cv.addEventListener("pointermove", (e) => {
+      if (!(e.buttons || e.pointerType === "touch")) return;
+      toque(e);
+      if (esPalma(aj, e)) return;
+      const dt = e.timeStamp - M.ult;
+      if (dt > 0 && dt < 60) M.dts.push(dt);
+      M.ult = e.timeStamp;
+      M.quieto.push([e.clientX, e.clientY, e.timeStamp]);
+      medirQuieto(e.timeStamp);
+    });
+    const soltar = (e) => { medirQuieto(e.timeStamp); M.escribiendo = false; pintarMedidas(); };
+    cv.addEventListener("pointerup", soltar);
+    cv.addEventListener("pointercancel", soltar);
     for (const t of ["touchstart", "touchmove"]) cv.addEventListener(t, (e) => e.preventDefault(), { passive: false });
     const cuerpo = el("div", { class: "prueba-lapiz" }, [
-      info, cv,
+      info, cv, medidas,
       el("p", { class: "nota" }, "Blue = it writes. Red = it's taken as your palm and ignored. If your stylus shows red, tap \"Use my stylus\" after writing a few words."),
     ]);
     dialogo("Stylus test", cuerpo, [
+      { texto: "Apply smoothing", fn: async () => {
+        if (M.recomendado == null) { aviso("First hold the stylus still for 1 second in the box"); return false; }
+        const h = await db.getKV("herramientas", {});
+        h.pen = Object.assign({}, h.pen, { suavizado: M.recomendado });
+        // que la migración de ajustes al abrir un cuaderno no lo pise
+        h.v2 = true; h.v3 = true;
+        await db.setKV("herramientas", h);
+        aviso(`Motion smoothing set to ${Math.round(M.recomendado * 100)}%`);
+        return false;
+      } },
       { texto: "Forget calibration", fn: () => { delete aj.anchoLapiz; this.app.guardarAjustes(); aviso("Calibration removed"); } },
       { texto: "Use my stylus", principal: true, fn: () => {
         if (tams.length < 10) { aviso("Write a few words first (only with the stylus)"); return false; }
@@ -548,4 +610,19 @@ export class Biblioteca {
     ]);
     dialogo("Settings", cuerpo, [{ texto: "Done", principal: true }], { clase: "ancho" });
   }
+}
+
+// suavizado de movimiento recomendado según el temblor del lápiz (px), de la
+// simulación con la letra de Juan: 0,25 px → 0 · 0,5 → 10 % · 0,75 → 30 % ·
+// 1 → 50 % · 1,5 o más → 60 %
+export function suavizadoPara(t) {
+  const tabla = [[0.25, 0], [0.5, 0.1], [0.75, 0.3], [1, 0.5], [1.5, 0.6]];
+  if (t <= tabla[0][0]) return 0;
+  for (let k = 1; k < tabla.length; k++) {
+    if (t <= tabla[k][0]) {
+      const [a, sa] = tabla[k - 1], [b, sb] = tabla[k];
+      return Math.round((sa + ((sb - sa) * (t - a)) / (b - a)) * 20) / 20;
+    }
+  }
+  return 0.6;
 }

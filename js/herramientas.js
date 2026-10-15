@@ -231,8 +231,8 @@ class Escritura {
       const out = seguirDensificando(V.e, pts, Math.max(0.6, this.it.w * 0.35));
       const C = cache(V.it);
       C.dens = out.concat([pts[(n - 1) * 3], pts[(n - 1) * 3 + 1], pts[(n - 1) * 3 + 2]]);
-      C.r = undefined; C.constante = undefined; C.ruta = undefined;
-    } else { const C = cache(V.it); C.dens = C.r = C.constante = C.ruta = undefined; }
+      C.r = undefined; C.constante = undefined; C.ruta = undefined; C.modo = undefined;
+    } else { const C = cache(V.it); C.dens = C.r = C.constante = C.ruta = C.modo = undefined; }
     pintarItem(ctx, V.it);
   }
 }

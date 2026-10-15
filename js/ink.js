@@ -194,6 +194,8 @@ export function trazarSellos(ctx, pts, r) {
 // Pinta un trazo de bolígrafo o subrayador en coordenadas de página
 export function pintarTrazo(ctx, it) {
   const C = cache(it);
+  // ya construido: sólo pintar la forma guardada
+  if (C.modo && C.ruta && !ctx.esPdf) { pintarRuta(ctx, it, C); return; }
   const pts = C.dens || (C.dens = densificar(it.pts, Math.max(0.6, it.w * 0.35)));
   if (it.tool === "highlighter") {
     // subrayador: grosor fijo, extremos planos, color translúcido que no se
@@ -209,7 +211,7 @@ export function pintarTrazo(ctx, it) {
       ctx.moveTo(pts[0], pts[1]);
       for (let i = 3; i < pts.length; i += 3) ctx.lineTo(pts[i], pts[i + 1]);
       ctx.stroke();
-    } else ctx.stroke(ruta(C, (r) => { r.moveTo(pts[0], pts[1]); for (let i = 3; i < pts.length; i += 3) r.lineTo(pts[i], pts[i + 1]); }));
+    } else { ctx.stroke(ruta(C, (r) => { r.moveTo(pts[0], pts[1]); for (let i = 3; i < pts.length; i += 3) r.lineTo(pts[i], pts[i + 1]); })); listo(C, "hl"); }
     ctx.restore();
     return;
   }
@@ -234,6 +236,7 @@ export function pintarTrazo(ctx, it) {
       if (pts.length === 3) r.lineTo(pts[0] + 0.01, pts[1]);
       for (let i = 3; i < pts.length; i += 3) r.lineTo(pts[i], pts[i + 1]);
     }));
+    listo(C, "linea");
     ctx.restore();
     return;
   }
@@ -266,6 +269,30 @@ export function pintarTrazo(ctx, it) {
   }
   ctx.fillStyle = it.color;
   ctx.fill(ruta(C, (q) => trazarSellos(q, pts, r)), "nonzero");
+  listo(C, "sellos");
+  ctx.restore();
+}
+
+// con la forma ya guardada, los puntos densificados y los radios sobran: se
+// sueltan (unos 3-4 MB por página de 2.400 trazos). Si hicieran falta otra vez
+// (exportar a PDF), se recalculan
+function listo(C, modo) { C.modo = modo; C.dens = undefined; C.r = undefined; }
+
+function pintarRuta(ctx, it, C) {
+  ctx.save();
+  if (C.modo === "hl") {
+    ctx.globalAlpha = it.op != null ? it.op : 0.4;
+    ctx.strokeStyle = it.color; ctx.lineWidth = it.w;
+    ctx.lineCap = "butt"; ctx.lineJoin = "round";
+    ctx.stroke(C.ruta);
+  } else {
+    if (it.op != null && it.op < 1) ctx.globalAlpha = it.op;
+    if (C.modo === "linea") {
+      ctx.strokeStyle = it.color; ctx.lineWidth = C.constante;
+      ctx.lineCap = "round"; ctx.lineJoin = "round";
+      ctx.stroke(C.ruta);
+    } else { ctx.fillStyle = it.color; ctx.fill(C.ruta, "nonzero"); }
+  }
   ctx.restore();
 }
 

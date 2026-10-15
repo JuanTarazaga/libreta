@@ -18,6 +18,7 @@ import { el, icono, boton, aviso, cerrarEmergente } from "./ui.js";
 import { pintarItem, alCargar, colorFondo, pintarPapel, pintarCapas, ordenItems } from "./render.js";
 import { HERRAMIENTAS_DEF, uid, esPalma, cajaDe, unirCajas } from "./model.js";
 import { db } from "./db.js";
+import { olvidar } from "./cache.js";
 import { crearHerramientas } from "./herramientas.js";
 import * as paneles from "./paneles.js";
 
@@ -309,7 +310,13 @@ export class Editor {
       if (r.x + r.w > -margen && r.x < this.vw + margen && r.y + r.h > -margen && r.y < this.vh + margen) vis.add(i);
     }
     for (const [i, v] of this.vistas) {
-      if (!vis.has(i)) { v.cv.width = 0; v.cv.height = 0; v.div.remove(); this.vistas.delete(i); }
+      if (!vis.has(i)) {
+        v.cv.width = 0; v.cv.height = 0; v.div.remove(); this.vistas.delete(i);
+        if (v.pend) { v.pend.cv.width = 0; v.pend.cv.height = 0; }
+        // la geometría guardada de sus trazos, fuera (se rehace si vuelve)
+        const p = this.paginas[i];
+        if (p) for (const c of p.layers) olvidar(c.items);
+      }
     }
     for (const i of vis) {
       if (!this.vistas.has(i)) {
@@ -414,6 +421,14 @@ export class Editor {
     this.raf = requestAnimationFrame(() => { this.raf = 0; this.fotograma(); });
   }
   // `zona` (px CSS de la vista): sólo ha cambiado eso. Sin zona, todo
+  // pinta YA lo vivo, en el mismo evento del lápiz: sin esperar al fotograma
+  // siguiente (podía ir uno por detrás del lápiz). Mismo dibujo
+  pintarVivoYa() {
+    if (!this.vivoSucio) return;
+    this.vivoSucio = false;
+    this.pintarVivo();
+  }
+
   pedirVivo(zona) {
     if (zona && !this.vivoTodo) this.vivoZona = this.vivoZona ? unirCajas([this.vivoZona, zona]) : zona;
     else this.vivoTodo = true;
@@ -561,6 +576,8 @@ export class Editor {
     this.detalleCv.style.display = "none";
     this.detalleOn = false;
     this.detNuevo = null;
+    // el de reserva, a 0: son 12 MB que no hacen falta sin zoom
+    if (this.detalleLibre) { this.detalleLibre.width = 0; this.detalleLibre.height = 0; this.detalleLibre = null; }
   }
   // de página a canvas de detalle, con el recorte de la página
   aDetalle(ctx, r, page) {
@@ -674,7 +691,11 @@ export class Editor {
   }
 
   instantanea(i) {
-    return this.paginas[i].layers.map((c) => ({ id: c.id, name: c.name, visible: c.visible, locked: c.locked, items: c.items.slice() }));
+    // las listas de elementos no se copian: nunca se modifican en el sitio
+    // (cada cambio crea una lista nueva), así que basta con guardarlas. Antes
+    // cada trazo copiaba dos veces la lista entera de la página (memoria y
+    // recolector de basura con 2.400 trazos)
+    return this.paginas[i].layers.map((c) => ({ id: c.id, name: c.name, visible: c.visible, locked: c.locked, items: c.items }));
   }
 
   // fn(page) cambia la página. Guarda el antes/después para deshacer.
@@ -850,6 +871,7 @@ export class Editor {
       const lista = e.getCoalescedEvents ? e.getCoalescedEvents() : null;
       if (lista && lista.length) for (const c of lista) this.herr.move && this.herr.move(c, p);
       else this.herr.move && this.herr.move(e, p);
+      this.pintarVivoYa();
       return;
     }
     // una vez por fotograma, con todos los dedos ya al día: cada dedo manda

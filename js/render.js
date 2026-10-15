@@ -48,7 +48,7 @@ export function precargarImagen(blobId) {
 // 2 GB y una página A4 a 2x son ~22 MB)
 const pdfs = new Map();         // blobId → Promise<PDFDocumentProxy>
 const pdfPaginas = new Map();   // `${blobId}:${index}` → {escala, canvas, pendiente}
-const MAX_PDF_CACHE = 8;
+const MAX_PDF_CACHE = 4;        // cada una es un canvas de página entera: memoria
 
 export function documentoPdf(blobId) {
   let p = pdfs.get(blobId);

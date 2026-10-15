@@ -344,6 +344,7 @@ input, textarea, select { font: inherit; color: inherit; -webkit-user-select: te
 /* prueba del lápiz */
 .prueba-lapiz { display: flex; flex-direction: column; gap: 10px; }
 .lapiz-lienzo { width: 100%; height: 240px; border: 2px dashed var(--borde); border-radius: 12px; background: var(--panel-2); touch-action: none; }
+.lapiz-medidas { font-size: 13px; color: var(--texto-2, #667); margin: 6px 0; font-variant-numeric: tabular-nums; }
 .lapiz-info { font-weight: 600; padding: 8px 12px; border-radius: 10px; background: var(--panel-2); font-variant-numeric: tabular-nums; }
 .lapiz-info.bien { color: #12814a; }
 .lapiz-info.mal { color: var(--peligro); }

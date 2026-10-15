@@ -16,5 +16,7 @@ export function compartirCache(nuevo, viejo) {
   if (c) mapa.set(nuevo, c);
   return nuevo;
 }
+// suelta la geometría de unos elementos (una página que sale de la vista)
+export function olvidar(items) { for (const it of items) mapa.delete(it); }
 // textos que se están editando (los pinta el editor HTML, no el canvas)
 export const editandoTexto = new WeakSet();
