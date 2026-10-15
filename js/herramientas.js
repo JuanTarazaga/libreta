@@ -3,7 +3,7 @@
 // canvas vivo (pintarVivo). Los cambios en la página pasan por el editor para
 // que se puedan deshacer.
 
-import { Captura, reconocerForma, tocaTrazo, cortarTrazo, esTachado, envolvente, seguirDensificando } from "./ink.js";
+import { Captura, reconocerForma, tocaTrazo, cortarTrazo, esTachado, envolvente, seguirDensificando, seguirDensificandoH } from "./ink.js";
 import { MM, uid, cajaDe, unirCajas, cortan, transformar, matrizAlrededor, puntoEnPoligono, cajaPuntos } from "./model.js";
 import { pintarItem, altoTexto, fuenteCss } from "./render.js";
 import { cache, compartirCache, editandoTexto } from "./cache.js";
@@ -56,6 +56,9 @@ class Escritura {
       type: "stroke", tool: hl ? "highlighter" : "pen", pen: hl ? null : aj.tipo,
       color: aj.color, w: mm * MM, op: hl ? aj.opacidad : 1,
       v: 2, min: hl ? 1 : aj.anchoMin,
+      // curva híbrida, con la escala de pantalla a la que se escribe (decide
+      // qué puntos están "juntos" y cuáles "separados")
+      cur: "h", esc: Math.round(ed.escalaPantalla(c.i) * 100) / 100,
     };
     this.cap = new Captura({
       presion: hl ? 0 : aj.presion,
@@ -145,7 +148,9 @@ class Escritura {
         this.tachando = esTachado(this.cap.pts) ? this.bajoTachado(this.cap.pts) : null;
       }
     }
-    if (Math.hypot(p.x - this.anclaForma.x, p.y - this.anclaForma.y) > 3) this.armarForma(p);
+    // quieto = a menos de 5 px del ancla (con 3, el temblor de un lápiz
+    // capacitivo reiniciaba la espera y la forma no salía al mantener)
+    if (Math.hypot(p.x - this.anclaForma.x, p.y - this.anclaForma.y) > 5) this.armarForma(p);
     this.ed.pedirVivo(this.areaVivo());
   }
 
@@ -228,9 +233,10 @@ class Escritura {
     if (!this.vd || this.vd.pts !== pts) this.vd = { pts, e: {}, it: { ...this.it, pts } };
     const V = this.vd, n = pts.length / 3;
     if (n >= 3) {
-      const out = seguirDensificando(V.e, pts, Math.max(0.6, this.it.w * 0.35));
+      const paso = Math.max(0.6, this.it.w * 0.35);
       const C = cache(V.it);
-      C.dens = out.concat([pts[(n - 1) * 3], pts[(n - 1) * 3 + 1], pts[(n - 1) * 3 + 2]]);
+      if (this.it.cur === "h") C.dens = seguirDensificandoH(V.e, pts, paso, this.it.esc);
+      else C.dens = seguirDensificando(V.e, pts, paso).concat([pts[(n - 1) * 3], pts[(n - 1) * 3 + 1], pts[(n - 1) * 3 + 2]]);
       C.r = undefined; C.constante = undefined; C.ruta = undefined; C.modo = undefined;
     } else { const C = cache(V.it); C.dens = C.r = C.constante = C.ruta = C.modo = undefined; }
     pintarItem(ctx, V.it);

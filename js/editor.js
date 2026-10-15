@@ -423,8 +423,12 @@ export class Editor {
   // `zona` (px CSS de la vista): sólo ha cambiado eso. Sin zona, todo
   // pinta YA lo vivo, en el mismo evento del lápiz: sin esperar al fotograma
   // siguiente (podía ir uno por detrás del lápiz). Mismo dibujo
+  // Como mucho una vez por fotograma: si el iPad manda varios movimientos
+  // seguidos, dibujar en cada uno sólo cargaría el hilo y Safari empezaría a
+  // juntar movimientos (y los puntos intermedios del lápiz se pierden)
   pintarVivoYa() {
-    if (!this.vivoSucio) return;
+    if (!this.vivoSucio || this._vivoEnEste) return;
+    this._vivoEnEste = true;
     this.vivoSucio = false;
     this.pintarVivo();
   }
@@ -442,7 +446,9 @@ export class Editor {
   // un canvas aparte: nunca se ve una página a medio pintar
   fotograma() {
     const t0 = performance.now();
-    const presupuesto = this.gesto || this.modo === "dibujo" ? 6 : 14;
+    this._vivoEnEste = false;
+    // escribiendo, poco tiempo para repintar páginas: el lápiz manda
+    const presupuesto = this.modo === "dibujo" ? 4 : this.gesto ? 6 : 14;
     if (this.vivoSucio) { this.vivoSucio = false; this.pintarVivo(); }
     for (const i of [...this.sucias]) {
       this.sucias.delete(i);
@@ -484,7 +490,7 @@ export class Editor {
     ctx.setTransform(p.k, 0, 0, p.k, 0, 0);
     while (p.n < p.lista.length) {
       pintarItem(ctx, p.lista[p.n++]);
-      if ((p.n & 15) === 0 && performance.now() > limite) return;
+      if ((p.n & 3) === 0 && performance.now() > limite) return;
     }
     // terminada: se cambia por la que se veía, de una vez
     const l = this.lay[i];
@@ -636,7 +642,7 @@ export class Editor {
       if (t.n < 0) { pintarPapel(ctx, pg, t.k); t.n = 0; }
       while (t.n < t.lista.length) {
         pintarItem(ctx, t.lista[t.n++]);
-        if ((t.n & 15) === 0 && performance.now() > limite) { ctx.restore(); return false; }
+        if ((t.n & 3) === 0 && performance.now() > limite) { ctx.restore(); return false; }
       }
       ctx.restore();
     }
