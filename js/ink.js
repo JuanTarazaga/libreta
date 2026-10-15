@@ -32,9 +32,17 @@ export class Captura {
   //   suavizado  suavizado del movimiento (media exponencial de la posición)
   //   (el ancho mínimo se aplica al pintar: radios(), campo `min` del trazo)
   añadir(x, y, t) {
-    this.crudos.push(x, y, t);
+    const c = this.crudos;
+    // el suavizado de movimiento SÓLO donde los puntos llegan juntos (ahí el
+    // temblor del lápiz se nota); con puntos separados (letra grande, escribir
+    // deprisa) no quita temblor y sí deforma: la letra salía más pequeña y
+    // redonda que la escrita (medido con los trazos de Juan, zoom 10,8)
+    const d = c.length >= 3 ? Math.hypot(x - c[c.length - 3], y - c[c.length - 2]) * this.escala : 0;
+    // (3 px o menos: entero; 10 px o más: nada. Ajustado en simulación)
+    const pesoSuav = Math.max(0, Math.min(1, (10 - d) / 7));
+    c.push(x, y, t);
     const a = this.a;
-    const k = 1 - Math.min(0.9, (a.suavizado || 0) * 0.8);
+    const k = 1 - Math.min(0.9, (a.suavizado || 0) * 0.8) * pesoSuav;
     if (this.sx === null) { this.sx = x; this.sy = y; }
     else { this.sx += (x - this.sx) * k; this.sy += (y - this.sy) * k; }
 
@@ -92,7 +100,7 @@ export function seguirDensificando(e, pts, paso) {
     const cx = pts[i * 3], cy = pts[i * 3 + 1], cp = pts[i * 3 + 2];
     const nx = (cx + pts[i * 3 + 3]) / 2, ny = (cy + pts[i * 3 + 4]) / 2, np = (cp + pts[i * 3 + 5]) / 2;
     const largo = Math.hypot(cx - e.px, cy - e.py) + Math.hypot(nx - cx, ny - cy);
-    const k = Math.max(1, Math.ceil(largo / paso));
+    const k = trozos(Math.hypot(e.px - 2 * cx + nx, e.py - 2 * cy + ny) / 4, largo);
     for (let j = 1; j <= k; j++) {
       const t = j / k, u = 1 - t;
       out.push(u * u * e.px + 2 * u * t * cx + t * t * nx,
@@ -135,12 +143,24 @@ function tramoH(out, Q, i, paso) {
   const m1y = ((y1 - y0) / d01 - (y2 - y0) / (d01 + d12) + (y2 - y1) / d12) * d12;
   const m2x = ((x2 - x1) / d12 - (x3 - x1) / (d12 + d23) + (x3 - x2) / d23) * d12;
   const m2y = ((y2 - y1) / d12 - (y3 - y1) / (d12 + d23) + (y3 - y2) / d23) * d12;
-  const k = Math.max(1, Math.ceil(Math.hypot(x2 - x1, y2 - y1) / paso));
+  // cuántos trozos: según lo que se CURVA el tramo (cúbica de Bézier
+  // equivalente), no cada `paso` fijo: con mucho zoom, 0,6 pt eran rectas de
+  // ~1 mm en pantalla (las "líneas de 1 mm"). Error máximo TOL
+  const b1x = x1 + m1x / 3, b1y = y1 + m1y / 3, b2x = x2 - m2x / 3, b2y = y2 - m2y / 3;
+  const dd = Math.max(Math.hypot(x1 - 2 * b1x + b2x, y1 - 2 * b1y + b2y), Math.hypot(b1x - 2 * b2x + x2, b1y - 2 * b2y + y2));
+  const k = trozos(dd * 0.75, Math.hypot(x2 - x1, y2 - y1));
   for (let j = 1; j <= k; j++) {
     const t = j / k, t2 = t * t, t3 = t2 * t;
     const h00 = 2 * t3 - 3 * t2 + 1, h10 = t3 - 2 * t2 + t, h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
     out.push(h00 * x1 + h10 * m1x + h01 * x2 + h11 * m2x, h00 * y1 + h10 * m1y + h01 * y2 + h11 * m2y, p1 + (p2 - p1) * t);
   }
+}
+// trozos para que una curva con "doblez" `c` (pt) no se aparte de sus cuerdas
+// más de TOL (0,015 pt: 0,16 px con el zoom máximo); y al menos uno cada 2 pt,
+// para que el grosor siga a la presión
+const TOL = 0.015;
+function trozos(c, largo) {
+  return Math.min(64, Math.max(1, Math.ceil(Math.sqrt(c / TOL)), Math.ceil(largo / 2)));
 }
 export function densificarH(pts, paso, esc) {
   const n = pts.length / 3;
