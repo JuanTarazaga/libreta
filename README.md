@@ -6,8 +6,7 @@ Apuntes a mano y PDFs en el iPad, sin límites y sin conexión.
 
 👉 **https://juantarazaga.github.io/libreta/**
 
-Ese enlace **es la app** (no la página de GitHub donde estás ahora, que sólo
-guarda el código).
+Ese enlace **es la app** 
 
 ## Instalarla en el iPad (una sola vez)
 
@@ -15,8 +14,8 @@ guarda el código).
    `juantarazaga.github.io/libreta`.
 2. Cuando cargue, pulsa **Compartir** (el cuadrado con la flecha hacia arriba)
    → **Añadir a pantalla de inicio** → **Añadir**.
-3. Ya tienes el icono de Libreta en la pantalla de inicio. A partir de ahora
-   **entra siempre desde el icono**: va a pantalla completa, funciona sin
+3. Ya tienes el icono de Libreta en la pantalla de inicio.
+   **Entra siempre desde el icono**: va a pantalla completa, funciona sin
    internet y Safari no borra tus apuntes.
 
 No hace falta volver a abrir el enlace: las actualizaciones llegan solas (a
