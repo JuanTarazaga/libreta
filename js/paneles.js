@@ -4,7 +4,7 @@
 import { el, icono, boton, emergente, menu, dialogo, pedirTexto, confirmar, aviso, selectorColor,
   deslizador, interruptor, segmentado, cerrarEmergente, pulsacionLarga, leerArchivo } from "./ui.js";
 import { MM, PAPELES, FONDOS, TAMANOS, nuevaPagina, nuevaCapa, uid, COLORES_SUBRAYADOR, HERRAMIENTAS_DEF } from "./model.js";
-import { miniatura } from "./render.js";
+import { miniatura, documentoPdf } from "./render.js";
 import { store, copiaLimpia } from "./store.js";
 import { db } from "./db.js";
 import { exportarPdf, importarArchivosEnCuaderno } from "./pdfio.js";
@@ -254,6 +254,24 @@ export async function añadirPagina(ed, despuesDe, papel) {
   if (ref && !papel) { p.w = ref.pdf || ref.image ? p.w : ref.w; p.h = ref.pdf || ref.image ? p.h : ref.h; p.paper = { ...ref.paper }; if (ref.pdf || ref.image) p.paper = { type: def.papel || "ruled", bg: "white", espaciado: 1 }; }
   // las mismas capas (nombres) que la página de referencia
   if (ref && ref.layers.length > 1) p.layers = ref.layers.map((c) => ({ ...nuevaCapa(c.name), visible: c.visible }));
+  // fondo de PLANTILLA: si la página de referencia es de una plantilla (la de
+  // Creación rápida, el papel de Noteful, un PDF de una sola página o una
+  // página de fondo que ya se repite en el cuaderno), la nueva lleva el mismo
+  if (ref && !papel && (ref.pdf || ref.image)) {
+    const pl = ed.n.paperDef && ed.n.paperDef.plantilla;
+    const mismo = (q) => ref.pdf ? q.pdf && q.pdf.blobId === ref.pdf.blobId && q.pdf.index === ref.pdf.index
+      : q.image && q.image.blobId === ref.image.blobId;
+    let unaPagina = false;
+    if (ref.pdf) {
+      try { unaPagina = (await documentoPdf(ref.pdf.blobId)).numPages === 1; } catch (e) { /* sin PDF */ }
+    }
+    const repetida = ed.paginas.filter(mismo).length >= 2;
+    const dePlantilla = pl && (ref.pdf ? ref.pdf.blobId : ref.image.blobId) === pl.blobId;
+    if (dePlantilla || unaPagina || repetida) {
+      p.w = ref.w; p.h = ref.h; p.paper = { ...ref.paper };
+      if (ref.pdf) p.pdf = { ...ref.pdf }; else p.image = { ...ref.image };
+    }
+  }
   await store.insertarPaginas(ed.n, [p], ref ? ref.id : null);
   await ed.recargarPaginas(despuesDe + 1);
 }

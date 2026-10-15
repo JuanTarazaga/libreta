@@ -2,7 +2,7 @@
 // Todo en coordenadas de página (puntos); quien llama pone la escala.
 
 import { db } from "./db.js";
-import { FONDOS, MM } from "./model.js";
+import { FONDOS, MM, cajaDe } from "./model.js";
 import { pintarTrazo } from "./ink.js";
 
 // ── recursos: imágenes y PDFs, cargados una vez ─────────────────────────────
@@ -420,7 +420,7 @@ export function pintarCapas(ctx, page, ocultos, region) {
         const esCinta = it.type === "tape";
         if ((pasada === 0) !== esSub || (pasada === 2) !== esCinta) continue;
         if (region) {
-          const b = it.bbox || it._caja;
+          const b = cajaDe(it);
           if (b && !(b.x < region.x + region.w && region.x < b.x + b.w && b.y < region.y + region.h && region.y < b.y + b.h)) continue;
         }
         pintarItem(ctx, it);

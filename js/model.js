@@ -73,7 +73,6 @@ export const AJUSTES_DEF = {
   dibujarConDedo: true,          // lápiz capacitivo = dedo: dibuja con un toque
   rechazoPalma: 2,               // 0 desactivado · 1 suave · 2 normal · 3 fuerte
   gestoDeshacer: true,           // dos dedos deshace, tres rehace
-  dobleToqueAjuste: true,        // doble toque con dos dedos: ajustar al ancho
   tirarParaPagina: true,         // tirar al final añade página
   mostrarNumPagina: true,
   rapido: { tam: "a4", papel: "ruled", fondo: "white", horizontal: false },
@@ -106,7 +105,7 @@ export const HERRAMIENTAS_DEF = {
     opacidad: 0.4,
   },
   eraser: {
-    modo: "stroke",              // stroke (trazo entero) | partial (por zonas)
+    modo: "partial",             // partial (por zonas) | stroke (trazo entero)
     grosores: GROSORES_GOMA.slice(),
     gi: 2,
     soloSubrayador: false,

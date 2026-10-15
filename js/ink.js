@@ -243,7 +243,15 @@ export function tocaTrazo(it, x, y, radio) {
 // Goma por zonas: quita del trazo lo que cae en el círculo y devuelve los
 // trozos que quedan (0, 1 o varios trazos nuevos)
 export function cortarTrazo(it, x, y, radio) {
-  const p = it.pts;
+  // puntos intermedios cada ~0,4 radios: si no, entre dos puntos separados
+  // (una línea, un trazo rápido) la goma se llevaba el tramo entero
+  const orig = it.pts, paso = Math.max(0.4, radio * 0.4);
+  const p = [orig[0], orig[1], orig[2]];
+  for (let i = 3; i < orig.length; i += 3) {
+    const ax = orig[i - 3], ay = orig[i - 2], ap = orig[i - 1], bx = orig[i], by = orig[i + 1], bp = orig[i + 2];
+    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / paso));
+    for (let k = 1; k <= n; k++) p.push(ax + ((bx - ax) * k) / n, ay + ((by - ay) * k) / n, ap + ((bp - ap) * k) / n);
+  }
   const lim = radio + it.w * 0.3;
   const trozos = [];
   let actual = [];
@@ -260,7 +268,7 @@ export function cortarTrazo(it, x, y, radio) {
     else if (actual.length) { trozos.push(actual); actual = []; }
   }
   if (actual.length) trozos.push(actual);
-  if (trozos.length === 1 && trozos[0].length === p.length) return null;   // no tocó
+  if (trozos.length === 1 && trozos[0].length === p.length) return null;   // no tocó (se queda el original)
   return trozos.filter((t) => t.length >= 6).map((pts) => {
     const n = { ...it, pts };
     delete n._dens; delete n._r; delete n.bbox;

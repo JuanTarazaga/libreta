@@ -6,8 +6,8 @@ import { store } from "./store.js";
 import { db } from "./db.js";
 import { el, icono, boton, menu, dialogo, pedirTexto, confirmar, aviso, pulsacionLarga, leerArchivo,
   segmentado, interruptor, cerrarEmergente, emergente, selectorColor } from "./ui.js";
-import { PORTADAS, fecha, esPalma } from "./model.js";
-import { miniatura, alCargar } from "./render.js";
+import { PORTADAS, fecha, esPalma, nuevaPagina } from "./model.js";
+import { miniatura, alCargar, documentoPdf } from "./render.js";
 import { elegirPapel, editarEtiquetas } from "./paneles.js";
 import { importarArchivos, exportarPdf } from "./pdfio.js";
 import { crearCopia, restaurarCopia } from "./backup.js";
@@ -276,9 +276,54 @@ export class Biblioteca {
   async rapido() {
     const r = this.aj.rapido;
     const d = new Date();
-    const n = await store.crearCuaderno({ title: `Note ${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`, folderId: this.carpetaActual() },
+    const titulo = `Note ${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    // con PLANTILLA propia (Juan, 15-oct: "elegir el archivo que quieres como
+    // creación de notebook rápido"): el cuaderno sale con las páginas de ese
+    // archivo de fondo, y las nuevas siguen con la plantilla
+    if (r.plantilla) {
+      const pl = r.plantilla;
+      const n = await store.crearCuaderno({ title: titulo, folderId: this.carpetaActual() }, {}, 0);
+      n.paperDef = { plantilla: pl };
+      const pags = [];
+      for (let k = 0; k < (pl.paginas || 1); k++) {
+        const pg = nuevaPagina(n.id, { papel: "blank" });
+        pg.w = pl.w; pg.h = pl.h;
+        if (pl.tipo === "pdf") pg.pdf = { blobId: pl.blobId, index: k };
+        else pg.image = { blobId: pl.blobId };
+        pags.push(pg);
+      }
+      await store.insertarPaginas(n, pags);
+      this.app.abrirCuaderno(n);
+      return;
+    }
+    const n = await store.crearCuaderno({ title: titulo, folderId: this.carpetaActual() },
       { tam: r.tam, papel: r.papel, fondo: r.fondo, horizontal: r.horizontal });
     this.app.abrirCuaderno(n);
+  }
+
+  // elegir el archivo (PDF o imagen) de la Creación rápida
+  async elegirPlantilla(archivo) {
+    const [f] = archivo ? [archivo] : await leerArchivo("application/pdf,image/*");
+    if (!f) return null;
+    const blobId = await store.guardarBlob(f);
+    const esPdf = f.type === "application/pdf" || /\.pdf$/i.test(f.name);
+    let w = 595.28, h = 841.89, paginas = 1;
+    if (esPdf) {
+      const doc = await documentoPdf(blobId);
+      paginas = doc.numPages;
+      const vp = (await doc.getPage(1)).getViewport({ scale: 1 });
+      w = vp.width; h = vp.height;
+    } else {
+      const dims = await new Promise((ok) => {
+        const im = new Image();
+        im.onload = () => { ok({ w: im.naturalWidth, h: im.naturalHeight }); URL.revokeObjectURL(im.src); };
+        im.onerror = () => ok({ w: 595, h: 842 });
+        im.src = URL.createObjectURL(f);
+      });
+      const k = 842 / Math.max(dims.w, dims.h);
+      w = dims.w * k; h = dims.h * k;
+    }
+    return { blobId, tipo: esPdf ? "pdf" : "image", nombre: f.name, paginas, w, h };
   }
 
   async nuevoCuaderno() {
@@ -479,12 +524,20 @@ export class Biblioteca {
       ]),
       el("div", { class: "aj-grupo" }, "Gestures"),
       interruptor("Two-finger tap to undo, three to redo", aj.gestoDeshacer, (v) => { aj.gestoDeshacer = v; guardar(); }),
-      interruptor("Two-finger double tap to fit width", aj.dobleToqueAjuste, (v) => { aj.dobleToqueAjuste = v; guardar(); }),
       interruptor("Pull at the end to add a page", aj.tirarParaPagina, (v) => { aj.tirarParaPagina = v; guardar(); }),
       interruptor("Show page number", aj.mostrarNumPagina, (v) => { aj.mostrarNumPagina = v; guardar(); }),
       el("div", { class: "aj-grupo" }, "Quick Create"),
-      el("button", { class: "dbtn", onclick: async () => { const p = await elegirPapel(aj.rapido, { titulo: "Quick Create paper", boton: "Save" }); if (p) { aj.rapido = p; guardar(); aviso("Saved"); } } },
-        `Paper: ${aj.rapido.papel} · ${aj.rapido.tam.toUpperCase()}`),
+      el("div", { class: "fila-botones" }, [
+        el("button", { class: "dbtn", onclick: async () => { const p = await elegirPapel(aj.rapido, { titulo: "Quick Create paper", boton: "Save" }); if (p) { aj.rapido = { ...p, plantilla: null }; guardar(); aviso("Saved"); } } },
+          aj.rapido.plantilla ? "Use a paper instead" : `Paper: ${aj.rapido.papel} · ${aj.rapido.tam.toUpperCase()}`),
+        el("button", { class: "dbtn" + (aj.rapido.plantilla ? " principal" : ""), onclick: async (e) => {
+          const pl = await this.elegirPlantilla();
+          if (!pl) return;
+          aj.rapido = { ...aj.rapido, plantilla: pl }; guardar();
+          e.currentTarget.textContent = "Template: " + pl.nombre;
+          aviso(`Quick Create will use "${pl.nombre}" (${pl.paginas} page${pl.paginas === 1 ? "" : "s"})`);
+        } }, aj.rapido.plantilla ? "Template: " + aj.rapido.plantilla.nombre : "Use a file as template…"),
+      ]),
       el("div", { class: "aj-grupo" }, "Backup"),
       el("p", { class: "nota" }, `Your notes live only on this iPad${espacio ? " (" + espacio + ")" : ""}. Make a backup now and then and keep it in Files or iCloud Drive.` +
         (ultima ? ` Last backup: ${fecha(ultima)}.` : " No backup yet.")),

@@ -130,6 +130,9 @@ class Store {
   async purgarBlobs(candidatos) {
     if (!candidatos.size) return;
     const usados = new Set();
+    // la plantilla de Creación rápida no es de ningún cuaderno, pero se usa
+    const aj = await db.getKV("ajustes", {});
+    if (aj && aj.rapido && aj.rapido.plantilla) usados.add(aj.rapido.plantilla.blobId);
     const todas = await db.all("pages");
     for (const p of todas) {
       if (p.pdf) usados.add(p.pdf.blobId);

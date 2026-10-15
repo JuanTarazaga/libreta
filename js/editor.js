@@ -15,7 +15,7 @@
 
 import { store } from "./store.js";
 import { el, icono, boton, aviso, cerrarEmergente } from "./ui.js";
-import { pintarPagina, pintarItem, alCargar, colorFondo } from "./render.js";
+import { pintarPagina, pintarItem, alCargar, colorFondo, pintarPapel, pintarCapas } from "./render.js";
 import { HERRAMIENTAS_DEF, uid, esPalma } from "./model.js";
 import { db } from "./db.js";
 import { crearHerramientas } from "./herramientas.js";
@@ -24,6 +24,8 @@ import * as paneles from "./paneles.js";
 const MAX_PX = 6.2e6;           // píxeles máximos por canvas de página
 const HUECO = 18;               // px entre páginas
 const ZOOM_MIN = 0.35, ZOOM_MAX = 6;   // relativos al ajuste al ancho
+const TIRAR_MIN = 70;           // px pasado el final para empezar a cargar una página
+const TIRAR_MS = 700;           // lo que tarda en llenarse el círculo
 
 export class Editor {
   constructor(cuaderno, ajustes, alSalir) {
@@ -35,7 +37,7 @@ export class Editor {
     this.z = 1;                 // px CSS por punto de página
     this.zAjuste = 1;
     this.sx = 0; this.sy = 0;   // desplazamiento
-    this.pellizco = null;       // {s, ox, oy} durante el gesto
+    this.gz = null;             // {s, tx, ty} mientras se hace zoom
     this.vistas = new Map();    // índice → {div, cv, k, sucio}
     this.sucias = new Set();
     this.historial = []; this.rehechos = [];
@@ -54,6 +56,9 @@ export class Editor {
         this.herrAj[k] = Object.assign({}, HERRAMIENTAS_DEF[k], this.herrAj[k]);
       }
     }
+    // 15-oct: la goma por zonas pasa a ser la de serie (Juan: "borra todo
+    // del tirón, no solo la zona que estés borrando")
+    if (!this.herrAj.v2) { this.herrAj.eraser.modo = "partial"; this.herrAj.v2 = true; }
     this.paginas = await store.paginas(this.n);
     this.n.opened = Date.now();
     store.guardarCuaderno(this.n, true);
@@ -77,9 +82,13 @@ export class Editor {
     this.vista = el("div", { class: "vista" });
     this.contenido = el("div", { class: "contenido" });
     this.vivoCv = el("canvas", { class: "vivo" });
+    // capa de DETALLE: lo que se ve, a la resolución de la pantalla, cuando el
+    // zoom pasa del tope de píxeles del canvas de página (Juan, 15-oct: "la
+    // resolución no me convence"). Se pinta al quedarse quieta la vista
+    this.detalleCv = el("canvas", { class: "vivo detalle" });
     this.vivo = this.vivoCv.getContext("2d");
     this.indicador = el("button", { class: "indicador", onclick: () => paneles.irAPaginaDialogo(this) });
-    this.vista.append(this.contenido, this.vivoCv, this.indicador);
+    this.vista.append(this.contenido, this.detalleCv, this.vivoCv, this.indicador);
     this.raiz.append(this.barra, this.vista);
     cont.replaceChildren(this.raiz);
     this.construirBarra();
@@ -193,6 +202,8 @@ export class Editor {
     this.vivoCv.height = Math.round(r.height * dpr);
     this.vivoCv.style.width = r.width + "px";
     this.vivoCv.style.height = r.height + "px";
+    this.detalleCv.width = this.vivoCv.width; this.detalleCv.height = this.vivoCv.height;
+    this.detalleCv.style.width = r.width + "px"; this.detalleCv.style.height = r.height + "px";
   }
 
   horizontal() { return this.ajustes.desplazamiento === "horizontal"; }
@@ -255,11 +266,16 @@ export class Editor {
     }
   }
 
+  // pantalla = posición de disposición × s + t. Sin zoom en curso, s = 1 y
+  // t = −desplazamiento; mientras se pellizca, `gz` = {s, tx, ty}
+  vistaT() {
+    return this.gz || { s: 1, tx: -this.sx, ty: -this.sy };
+  }
+
   aplicarTransform() {
-    const p = this.pellizco;
-    let t = `translate(${-this.sx}px, ${-this.sy}px)`;
-    if (p) t = `translate(${p.ox}px, ${p.oy}px) scale(${p.s}) translate(${-p.ox}px, ${-p.oy}px) ` + t;
-    this.contenido.style.transform = t;
+    const t = this.vistaT();
+    this.contenido.style.transform = `translate(${t.tx}px, ${t.ty}px) scale(${t.s})`;
+    this.pedirDetalle();
     this.actualizarVisibles();
     this.actualizarIndicador();
     this.pedirVivo();
@@ -308,11 +324,8 @@ export class Editor {
 
   // rectángulo de una página en coordenadas de la vista (px CSS)
   rectPantalla(i) {
-    const l = this.lay[i];
-    let x = l.x - this.sx, y = l.y - this.sy, w = l.w, h = l.h;
-    const p = this.pellizco;
-    if (p) { x = p.ox + (x - p.ox) * p.s; y = p.oy + (y - p.oy) * p.s; w *= p.s; h *= p.s; }
-    return { x, y, w, h };
+    const l = this.lay[i], t = this.vistaT();
+    return { x: l.x * t.s + t.tx, y: l.y * t.s + t.ty, w: l.w * t.s, h: l.h * t.s };
   }
 
   // de un punto de pantalla (clientX/Y) a {i, x, y} de página. `fija`: la
@@ -353,7 +366,7 @@ export class Editor {
   actualizarIndicador() {
     if (!this.ajustes.mostrarNumPagina) { this.indicador.style.display = "none"; return; }
     const i = this.paginaActual();
-    const zoom = Math.round((this.z / this.zAjuste) * (this.pellizco ? this.pellizco.s : 1) * 100);
+    const zoom = Math.round((this.z / this.zAjuste) * this.vistaT().s * 100);
     this.indicador.textContent = `${i + 1} / ${this.paginas.length}` + (zoom !== 100 ? `  ·  ${zoom}%` : "");
     if (this.n.lastPage !== this.paginas[i].id) {
       this.n.lastPage = this.paginas[i].id;
@@ -410,12 +423,65 @@ export class Editor {
     const ctx = v.cv.getContext("2d");
     ctx.setTransform(v.k, 0, 0, v.k, 0, 0);
     pintarItem(ctx, it);
+    if (this.detalleOn) {
+      const d = this.detalleCv.getContext("2d");
+      d.save();
+      this.recortePagina(d, i);
+      this.enPagina(d, i);
+      pintarItem(d, it);
+      d.restore();
+    }
   }
 
   redibujar(i) {
     if (i == null) for (const k of this.vistas.keys()) this.sucias.add(k);
     else this.sucias.add(i);
     this.pedir();
+    if (this.detalleOn) this.pedirDetalle(30);
+  }
+
+  // ── detalle ──
+  necesitaDetalle() {
+    const dpr = window.devicePixelRatio || 1;
+    for (const v of this.vistas.values()) if (v.k < this.z * dpr * 0.97) return true;
+    return false;
+  }
+  pedirDetalle(ms = 160) {
+    clearTimeout(this._tDetalle);
+    // la vista se mueve: fuera el detalle (está en coordenadas de pantalla)
+    if (ms > 30 && this.detalleOn) { this.detalleCv.style.display = "none"; this.detalleOn = false; }
+    this._tDetalle = setTimeout(() => this.pintarDetalle(), ms);
+  }
+  recortePagina(ctx, i) {
+    const r = this.rectPantalla(i), dpr = window.devicePixelRatio || 1;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.beginPath();
+    ctx.rect(r.x * dpr, r.y * dpr, r.w * dpr, r.h * dpr);
+    ctx.clip();
+  }
+  pintarDetalle() {
+    if (this.gesto || this.gz || !this.necesitaDetalle()) {
+      this.detalleCv.style.display = "none"; this.detalleOn = false;
+      return;
+    }
+    const ctx = this.detalleCv.getContext("2d");
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, this.detalleCv.width, this.detalleCv.height);
+    for (const [i, v] of this.vistas) {
+      const r = this.rectPantalla(i);
+      if (r.x > this.vw || r.y > this.vh || r.x + r.w < 0 || r.y + r.h < 0) continue;
+      const z = this.escalaPantalla(i);
+      // la parte visible, en coordenadas de página (no se pinta lo de fuera)
+      const region = { x: -r.x / z, y: -r.y / z, w: this.vw / z, h: this.vh / z };
+      ctx.save();
+      this.recortePagina(ctx, i);
+      this.enPagina(ctx, i);
+      pintarPapel(ctx, this.paginas[i], v.k);      // el PDF de fondo, a la escala del canvas de página
+      pintarCapas(ctx, this.paginas[i], this.ocultos && this.ocultos.i === i ? this.ocultos.ids : null, region);
+      ctx.restore();
+    }
+    this.detalleCv.style.display = "block";
+    this.detalleOn = true;
   }
 
   pintarVivo() {
@@ -612,19 +678,31 @@ export class Editor {
     if (!this.punteros.size) this.modo = null;
   }
 
+  // GESTOS (reescrito el 15-oct, Juan: "el movimiento con los dedos es
+  // ortopédico, se va hacia donde quiere"). Antes el desplazamiento se
+  // aplicaba por dentro del zoom (se multiplicaba por él) y al entrar o salir
+  // un dedo se recolocaban las páginas en mitad del gesto. Ahora: el punto de
+  // la página que estaba bajo los dedos al empezar sigue bajo los dedos
+  // (t = centro − X·s), y si cambia el número de dedos se toma la vista de ese
+  // instante como nueva base, sin recolocar nada hasta soltar.
   empezarGesto() {
     if (this.modo !== "mano" || this.punteros.size > 1) this.modo = "gesto";
-    const ps = [...this.punteros.values()];
+    const ps = this.dedos();
     const c = this.centro(ps);
+    const prev = this.gesto;
     this.gesto = {
-      cx: c.x, cy: c.y, d: this.distancia(ps), sx: this.sx, sy: this.sy, n: ps.length,
-      t0: this.gesto && this.gesto.t0 && this.gesto.n <= ps.length ? this.gesto.t0 : performance.now(),
-      maxN: Math.max(ps.length, this.gesto ? this.gesto.maxN || 0 : 0),
-      movido: this.gesto ? this.gesto.movido : false,
+      c0: c, d0: this.distancia(ps), base: { ...this.vistaT() }, n: ps.length,
+      t0: prev ? prev.t0 : performance.now(),
+      maxN: Math.max(ps.length, prev ? prev.maxN : 0),
+      movido: prev ? prev.movido : false,
+      zoom: prev ? prev.zoom : false,
+      añadida: prev ? prev.añadida : false,
       vel: { x: 0, y: 0, t: performance.now() },
     };
-    if (this.pellizco) this.confirmarPellizco();
   }
+
+  // los dedos en orden fijo (los dos primeros miden el pellizco)
+  dedos() { return [...this.punteros.values()].sort((a, b) => a.id - b.id); }
 
   centro(ps) {
     let x = 0, y = 0;
@@ -639,85 +717,134 @@ export class Editor {
   moverGesto() {
     const g = this.gesto;
     if (!g) return;
-    const ps = [...this.punteros.values()];
+    const ps = this.dedos();
     const c = this.centro(ps);
-    const dx = c.x - g.cx, dy = c.y - g.cy;
-    if (Math.hypot(dx, dy) > 8) g.movido = true;
+    if (Math.hypot(c.x - g.c0.x, c.y - g.c0.y) > 8) g.movido = true;
     const ahora = performance.now();
-    // velocidad para la inercia
     const dt = ahora - g.vel.t;
-    if (dt > 0) {
-      g.vel.x = 0.7 * g.vel.x + 0.3 * ((g.ultX != null ? c.x - g.ultX : 0) / dt);
-      g.vel.y = 0.7 * g.vel.y + 0.3 * ((g.ultY != null ? c.y - g.ultY : 0) / dt);
-      g.vel.t = ahora;
+    if (dt > 0 && g.ult) {
+      g.vel.x = 0.7 * g.vel.x + 0.3 * ((c.x - g.ult.x) / dt);
+      g.vel.y = 0.7 * g.vel.y + 0.3 * ((c.y - g.ult.y) / dt);
     }
-    g.ultX = c.x; g.ultY = c.y;
-    if (ps.length >= 2 && g.d > 0) {
-      const s = this.distancia(ps) / g.d;
-      if (Math.abs(s - 1) > 0.04) g.movido = true;
-      const zRel = (this.z * s) / this.zAjuste;
-      const sLim = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zRel)) / (this.z / this.zAjuste);
-      this.pellizco = { s: sLim, ox: g.cx, oy: g.cy };
+    g.vel.t = ahora; g.ult = c;
+    const b = g.base;
+    let s = b.s;
+    if (ps.length >= 2 && g.d0 > 0) {
+      const d = this.distancia(ps);
+      // sólo es pellizco si los dedos se acercan o se alejan de verdad: al
+      // arrastrar con dos dedos cada uno se mueve en un instante distinto y
+      // la distancia baila un 3-4 % (con eso se colaba un zoom)
+      if (!g.zoom && Math.abs(d - g.d0) > Math.max(20, 0.08 * g.d0)) {
+        g.movido = true; g.zoom = true;
+        // el zoom arranca desde aquí: sin salto por lo que ya se separaron
+        g.d0 = d;
+        g.base = { ...this.vistaT() }; g.c0 = c;
+      }
+      // límites de zoom (relativos al ajuste al ancho)
+      const zMin = (ZOOM_MIN * this.zAjuste) / this.z, zMax = (ZOOM_MAX * this.zAjuste) / this.z;
+      if (g.zoom) s = Math.max(zMin, Math.min(zMax, g.base.s * (this.distancia(ps) / g.d0)));
     }
-    this.sx = g.sx - dx; this.sy = g.sy - dy;
-    this.limitar(this.ajustes.tirarParaPagina ? 120 : 0);
+    // el punto que estaba bajo los dedos (en coordenadas de disposición)
+    const bb = g.base;
+    const X = (g.c0.x - bb.tx) / bb.s, Y = (g.c0.y - bb.ty) / bb.s;
+    const tx = c.x - X * s, ty = c.y - Y * s;
+    if (!g.zoom && Math.abs(s - 1) < 1e-6) {
+      this.gz = null;
+      this.sx = -tx; this.sy = -ty;
+      this.limitar(this.ajustes.tirarParaPagina ? 140 : 0);
+      this.tirar();
+    } else {
+      this.gz = { s, tx, ty };
+    }
     this.aplicarTransform();
   }
 
   gestoUp() {
     const g = this.gesto;
     if (!g) return;
-    // toques con 2 o 3 dedos sin mover: deshacer / rehacer
+    // toques con 2 o 3 dedos sin mover: deshacer / rehacer (nada de doble
+    // toque: Juan, 15-oct, "solo moviendo los dedos hacia dentro y fuera")
     const dur = performance.now() - g.t0;
     if (!this.punteros.size && !g.movido && dur < 320 && this.ajustes.gestoDeshacer) {
-      if (g.maxN === 2) {
-        // doble toque con dos dedos: ajustar al ancho
-        const ahora = performance.now();
-        if (this.ajustes.dobleToqueAjuste && this._ultimoDos && ahora - this._ultimoDos < 380) {
-          this.rehacer();         // el primer toque había deshecho: se devuelve
-          this._ultimoDos = 0;
-          const i = this.paginaActual();
-          this.ajustarAncho(); this.irAPagina(i);
-        } else { this._ultimoDos = ahora; this.deshacer(); }
-      } else if (g.maxN === 3) this.rehacer();
+      if (g.maxN === 2) this.deshacer();
+      else if (g.maxN === 3) this.rehacer();
     }
   }
 
-  confirmarPellizco() {
-    const p = this.pellizco;
-    if (!p) return;
-    // la nueva escala real; el punto bajo los dedos se queda donde está
-    const zNueva = this.z * p.s;
-    const cx = p.ox, cy = p.oy;
-    const contX = (cx + this.sx) / this.z, contY = (cy + this.sy) / this.z;   // en "puntos" de contenido
-    this.pellizco = null;
-    this.z = zNueva;
+  // al soltar un zoom: se recoloca a la nueva escala dejando quieto el punto
+  // que hay en el centro de la vista (página y posición dentro de ella)
+  confirmarZoom() {
+    const t = this.gz;
+    if (!t) return;
+    const ancla = this.aPagina(this.vx + this.vw / 2, this.vy + this.vh / 2);
+    this.z = this.z * t.s;
+    this.gz = null;
     this.disponer();
-    this.sx = contX * this.z - cx;
-    this.sy = contY * this.z - cy;
+    if (ancla) {
+      const l = this.lay[ancla.i];
+      this.sx = l.x + ancla.x * this.z - this.vw / 2;
+      this.sy = l.y + ancla.y * this.z - this.vh / 2;
+    }
     this.limitar();
     this.aplicarTransform();
+  }
+
+  // TIRAR AL FINAL PARA AÑADIR PÁGINA (Juan, 15-oct: "que tengas que esperar
+  // a que un icono de cargando termine, como en Noteful, porque sino abres
+  // infinitas páginas"). Pasado el final más de TIRAR_MIN px, un círculo se
+  // va llenando mientras se mantiene; lleno, una página y sólo una por gesto.
+  tirar() {
+    const g = this.gesto;
+    if (!g || !this.ajustes.tirarParaPagina) return;
+    const maxY = Math.max(0, this.altoTotal - this.vh), maxX = Math.max(0, this.anchoTotal - this.vw);
+    const pasado = this.horizontal() ? this.sx - maxX : this.sy - maxY;
+    if (!this.tirarEl) {
+      this.tirarEl = el("div", { class: "tirar" }, [el("div", { class: "tirar-anillo" }), el("span", {}, "")]);
+      this.vista.append(this.tirarEl);
+    }
+    const e = this.tirarEl;
+    e.classList.toggle("horizontal", this.horizontal());
+    if (pasado < 12 || g.añadida) {
+      e.classList.remove("ver");
+      g.tirarT = 0; g.progreso = 0;
+      return;
+    }
+    e.classList.add("ver");
+    const listo = pasado >= TIRAR_MIN;
+    if (!listo) { g.tirarT = 0; g.progreso = 0; }
+    else if (!g.tirarT) g.tirarT = performance.now();
+    const pintar = () => {
+      if (this.gesto !== g || g.añadida) return;
+      const prog = g.tirarT ? Math.min(1, (performance.now() - g.tirarT) / TIRAR_MS) : 0;
+      g.progreso = prog;
+      e.firstChild.style.background = `conic-gradient(var(--acento) ${prog * 360}deg, var(--borde) 0deg)`;
+      e.lastChild.textContent = prog >= 1 ? "New page" : listo ? "Hold to add a page…" : "Pull to add a page";
+      if (prog >= 1) {
+        g.añadida = true;
+        if (navigator.vibrate) navigator.vibrate(10);
+        setTimeout(() => e.classList.remove("ver"), 500);
+        paneles.añadirPagina(this, this.paginas.length - 1);
+        return;
+      }
+      if (g.tirarT) requestAnimationFrame(pintar);
+    };
+    if (!g.tirando) { g.tirando = true; requestAnimationFrame(() => { g.tirando = false; pintar(); }); }
   }
 
   terminarGesto() {
     const g = this.gesto;
     this.gesto = null;
     this.modo = null;
-    if (this.pellizco) this.confirmarPellizco();
-    // tirar al final: página nueva
-    if (this.ajustes.tirarParaPagina) {
-      const maxY = Math.max(0, this.altoTotal - this.vh), maxX = Math.max(0, this.anchoTotal - this.vw);
-      const pasado = this.horizontal() ? this.sx - maxX : this.sy - maxY;
-      if (pasado > 90) { paneles.añadirPagina(this, this.paginas.length - 1); return; }
-    }
+    if (this.tirarEl) this.tirarEl.classList.remove("ver");
+    if (this.gz) { this.confirmarZoom(); return; }
     this.limitar();
     this.aplicarTransform();
-    // inercia
-    if (g && g.vel && (Math.abs(g.vel.x) > 0.15 || Math.abs(g.vel.y) > 0.15)) {
+    // inercia (sólo si se desplazó, sin zoom)
+    if (g && !g.zoom && g.vel && (Math.abs(g.vel.x) > 0.15 || Math.abs(g.vel.y) > 0.15)) {
       let vx = g.vel.x * 16, vy = g.vel.y * 16;
       const paso = () => {
         if (this.punteros.size) return;
-        vx *= 0.94; vy *= 0.94;
+        vx *= 0.93; vy *= 0.93;
         this.sx -= vx; this.sy -= vy;
         this.limitar();
         this.aplicarTransform();
@@ -731,8 +858,9 @@ export class Editor {
     e.preventDefault();
     if (e.ctrlKey) {            // pellizco del trackpad / ctrl + rueda
       const s = Math.exp(-e.deltaY / 100);
-      this.pellizco = { s, ox: e.clientX - this.vx, oy: e.clientY - this.vy };
-      this.confirmarPellizco();
+      const X = e.clientX - this.vx + this.sx, Y = e.clientY - this.vy + this.sy;
+      this.gz = { s, tx: e.clientX - this.vx - X * s, ty: e.clientY - this.vy - Y * s };
+      this.confirmarZoom();
       return;
     }
     this.sx += e.deltaX; this.sy += e.deltaY;
