@@ -413,7 +413,13 @@ export class Editor {
     if (this.raf) return;
     this.raf = requestAnimationFrame(() => { this.raf = 0; this.fotograma(); });
   }
-  pedirVivo() { this.vivoSucio = true; this.pedir(); }
+  // `zona` (px CSS de la vista): sólo ha cambiado eso. Sin zona, todo
+  pedirVivo(zona) {
+    if (zona && !this.vivoTodo) this.vivoZona = this.vivoZona ? unirCajas([this.vivoZona, zona]) : zona;
+    else this.vivoTodo = true;
+    this.vivoSucio = true;
+    this.pedir();
+  }
 
   // POR TANDAS: una página de Noteful con 2.400 trazos tarda en pintarse; de
   // golpe congelaba el movimiento con dos dedos. Cada fotograma pinta lo que
@@ -631,14 +637,27 @@ export class Editor {
     return true;
   }
 
+  // EL CANVAS VIVO. Al escribir, sólo se borra y repinta la zona del trazo
+  // (más la del fotograma anterior), no los 3 millones de píxeles de la
+  // pantalla en cada fotograma. Si no se sabe qué cambió, entero
   pintarVivo() {
-    const ctx = this.vivo;
+    const ctx = this.vivo, dpr = window.devicePixelRatio || 1;
+    let z = null;
+    if (!this.vivoTodo && this.vivoZona && this.vivoAntes) z = unirCajas([this.vivoZona, this.vivoAntes]);
+    this.vivoAntes = this.vivoTodo ? null : this.vivoZona;
+    this.vivoTodo = false; this.vivoZona = null;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, this.vivoCv.width, this.vivoCv.height);
+    ctx.save();
+    if (z) {
+      const x = Math.floor(z.x * dpr), y = Math.floor(z.y * dpr), w = Math.ceil(z.w * dpr) + 2, h = Math.ceil(z.h * dpr) + 2;
+      ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+      ctx.clearRect(x, y, w, h);
+    } else ctx.clearRect(0, 0, this.vivoCv.width, this.vivoCv.height);
     if (this.herr && this.herr.pintarVivo) this.herr.pintarVivo(ctx);
     for (const h of Object.values(this.herramientas || {})) {
       if (h !== this.herr && h.pintarSiempre) h.pintarSiempre(ctx);
     }
+    ctx.restore();
   }
 
   // ── capas y cambios con deshacer ─────────────────────────────────────────
@@ -783,7 +802,7 @@ export class Editor {
       // Se decide por lo que hace: si se MUEVE, es un gesto (fuera la línea);
       // si se queda quieto mientras el lápiz sigue, es la mano
       const primero = this.punteroDibujo;
-      const reciente = performance.now() - primero.t0 < 300 && (primero.lejos || 0) < 50;
+      const reciente = performance.now() - primero.t0 < 250 && (primero.lejos || 0) < 40;
       if (this.dudoso && n >= 3) { this.aGesto(); return; }       // tres dedos: rehacer
       if (n === 2 && reciente && e.pointerType === "touch" && primero.tipo === "touch") {
         this.dudoso = p;
@@ -816,7 +835,13 @@ export class Editor {
     p.lejos = Math.max(p.lejos || 0, Math.hypot(p.x - p.x0, p.y - p.y0));
     if (this.dudoso) {
       const d = this.dudoso, primero = this.punteroDibujo;
-      if (p === d && p.lejos > 12) { this.aGesto(); return; }
+      // con dos dedos, el segundo se mueve tanto como el primero (o más, si el
+      // primero hace de pivote del pellizco); la mano que se apoya al escribir
+      // se desliza bastante menos que el lápiz
+      if (p === d && p.lejos > 12 && primero) {
+        const lapiz = Math.hypot(primero.x - d.otro0.x, primero.y - d.otro0.y);
+        if (p.lejos >= lapiz * 0.6) { this.aGesto(); return; }
+      }
       // el lápiz sigue escribiendo y el otro toque quieto: era la mano
       if (primero && (primero.lejos > 50 || performance.now() - d.t0 > 450)) { d.ignorado = true; this.dudoso = null; }
     }

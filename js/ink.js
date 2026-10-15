@@ -76,43 +76,40 @@ export class Captura {
 }
 
 // ── geometría del trazo ──────────────────────────────────────────────────────
-// Densifica con una curva de Catmull-Rom centrípeta: PASA por cada punto del
-// lápiz (la de antes, por los puntos medios, no: escribiendo deprisa, con
-// puntos a 3-5 pt a 60 Hz, redondeaba los picos de la "n" o la "v" y la letra
-// salía "derretida"). La centrípeta no hace bucles ni se pasa en las esquinas.
-// `tramo` añade los puntos entre el i y el i+1 (sin el i): sirve también para
-// el trazo en vivo, que se densifica poco a poco
-export function tramo(out, pts, i, paso) {
+// Densifica con curvas cuadráticas por los puntos medios: el trazo sale curvo
+// aunque la entrada llegue a saltos (60 Hz en el iPad Air 2), y suaviza el
+// temblor del lápiz capacitivo. (El 15-oct se probó una curva que pasaba por
+// cada punto: marcaba cada temblor y Juan dijo "te has cargado la escritura")
+//
+// `seguirDensificando` hace lo mismo poco a poco, para el trazo en vivo: el
+// tramo del punto i es definitivo cuando ya existe el i+1. `e` guarda por
+// dónde va; el resultado es idéntico a densificar() del trazo entero
+export function seguirDensificando(e, pts, paso) {
   const n = pts.length / 3;
-  const x1 = pts[i * 3], y1 = pts[i * 3 + 1], p1 = pts[i * 3 + 2];
-  const x2 = pts[i * 3 + 3], y2 = pts[i * 3 + 4], p2 = pts[i * 3 + 5];
-  // los vecinos; en los extremos, reflejados
-  const x0 = i > 0 ? pts[i * 3 - 3] : 2 * x1 - x2, y0 = i > 0 ? pts[i * 3 - 2] : 2 * y1 - y2;
-  const x3 = i + 2 < n ? pts[i * 3 + 6] : 2 * x2 - x1, y3 = i + 2 < n ? pts[i * 3 + 7] : 2 * y2 - y1;
-  const d01 = Math.max(1e-4, Math.sqrt(Math.hypot(x1 - x0, y1 - y0)));
-  const d12 = Math.max(1e-4, Math.sqrt(Math.hypot(x2 - x1, y2 - y1)));
-  const d23 = Math.max(1e-4, Math.sqrt(Math.hypot(x3 - x2, y3 - y2)));
-  // tangentes de la parametrización centrípeta (α = 0,5), a escala del tramo
-  const m1x = ((x1 - x0) / d01 - (x2 - x0) / (d01 + d12) + (x2 - x1) / d12) * d12;
-  const m1y = ((y1 - y0) / d01 - (y2 - y0) / (d01 + d12) + (y2 - y1) / d12) * d12;
-  const m2x = ((x2 - x1) / d12 - (x3 - x1) / (d12 + d23) + (x3 - x2) / d23) * d12;
-  const m2y = ((y2 - y1) / d12 - (y3 - y1) / (d12 + d23) + (y3 - y2) / d23) * d12;
-  const largo = Math.hypot(x2 - x1, y2 - y1);
-  const k = Math.max(1, Math.ceil(largo / paso));
-  for (let j = 1; j <= k; j++) {
-    const t = j / k, t2 = t * t, t3 = t2 * t;
-    const h00 = 2 * t3 - 3 * t2 + 1, h10 = t3 - 2 * t2 + t, h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
-    out.push(h00 * x1 + h10 * m1x + h01 * x2 + h11 * m2x,
-      h00 * y1 + h10 * m1y + h01 * y2 + h11 * m2y,
-      p1 + (p2 - p1) * t);
+  if (!e.out) { e.out = [pts[0], pts[1], pts[2]]; e.i = 1; e.px = pts[0]; e.py = pts[1]; e.pp = pts[2]; }
+  const out = e.out;
+  for (; e.i < n - 1; e.i++) {
+    const i = e.i;
+    const cx = pts[i * 3], cy = pts[i * 3 + 1], cp = pts[i * 3 + 2];
+    const nx = (cx + pts[i * 3 + 3]) / 2, ny = (cy + pts[i * 3 + 4]) / 2, np = (cp + pts[i * 3 + 5]) / 2;
+    const largo = Math.hypot(cx - e.px, cy - e.py) + Math.hypot(nx - cx, ny - cy);
+    const k = Math.max(1, Math.ceil(largo / paso));
+    for (let j = 1; j <= k; j++) {
+      const t = j / k, u = 1 - t;
+      out.push(u * u * e.px + 2 * u * t * cx + t * t * nx,
+        u * u * e.py + 2 * u * t * cy + t * t * ny,
+        u * u * e.pp + 2 * u * t * cp + t * t * np);
+    }
+    e.px = nx; e.py = ny; e.pp = np;
   }
+  return out;
 }
 
 export function densificar(pts, paso) {
   const n = pts.length / 3;
   if (n < 3) return pts.slice();
-  const out = [pts[0], pts[1], pts[2]];
-  for (let i = 0; i < n - 1; i++) tramo(out, pts, i, paso);
+  const out = seguirDensificando({}, pts, paso).slice();
+  out.push(pts[(n - 1) * 3], pts[(n - 1) * 3 + 1], pts[(n - 1) * 3 + 2]);
   return out;
 }
 
@@ -207,10 +204,12 @@ export function pintarTrazo(ctx, it) {
     ctx.lineWidth = it.w;
     ctx.lineCap = "butt";
     ctx.lineJoin = "round";
-    ctx.beginPath();
-    ctx.moveTo(pts[0], pts[1]);
-    for (let i = 3; i < pts.length; i += 3) ctx.lineTo(pts[i], pts[i + 1]);
-    ctx.stroke();
+    if (ctx.esPdf) {
+      ctx.beginPath();
+      ctx.moveTo(pts[0], pts[1]);
+      for (let i = 3; i < pts.length; i += 3) ctx.lineTo(pts[i], pts[i + 1]);
+      ctx.stroke();
+    } else ctx.stroke(ruta(C, (r) => { r.moveTo(pts[0], pts[1]); for (let i = 3; i < pts.length; i += 3) r.lineTo(pts[i], pts[i + 1]); }));
     ctx.restore();
     return;
   }
@@ -230,11 +229,11 @@ export function pintarTrazo(ctx, it) {
     ctx.strokeStyle = it.color;
     ctx.lineWidth = C.constante;
     ctx.lineCap = "round"; ctx.lineJoin = "round";
-    ctx.beginPath();
-    ctx.moveTo(pts[0], pts[1]);
-    if (pts.length === 3) ctx.lineTo(pts[0] + 0.01, pts[1]);
-    for (let i = 3; i < pts.length; i += 3) ctx.lineTo(pts[i], pts[i + 1]);
-    ctx.stroke();
+    ctx.stroke(ruta(C, (r) => {
+      r.moveTo(pts[0], pts[1]);
+      if (pts.length === 3) r.lineTo(pts[0] + 0.01, pts[1]);
+      for (let i = 3; i < pts.length; i += 3) r.lineTo(pts[i], pts[i + 1]);
+    }));
     ctx.restore();
     return;
   }
@@ -266,10 +265,16 @@ export function pintarTrazo(ctx, it) {
     return;
   }
   ctx.fillStyle = it.color;
-  ctx.beginPath();
-  trazarSellos(ctx, pts, r);
-  ctx.fill("nonzero");
+  ctx.fill(ruta(C, (q) => trazarSellos(q, pts, r)), "nonzero");
   ctx.restore();
+}
+
+// La forma del trazo se construye UNA vez y se guarda (Path2D): repintar una
+// página de 2.400 trazos (zoom, cambiar de página, la capa de detalle) ya no
+// repite miles de moveTo/lineTo/arc. Mismo dibujo, píxel a píxel
+function ruta(C, construir) {
+  if (!C.ruta) { C.ruta = new Path2D(); construir(C.ruta); }
+  return C.ruta;
 }
 
 export function grosorPt(mm) { return mm * MM; }

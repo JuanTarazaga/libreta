@@ -1,6 +1,6 @@
 // Service worker: guarda la app entera para que funcione sin conexión.
 // Al cambiar cualquier fichero, sube VERSION para que el iPad baje la nueva.
-const VERSION = "libreta-v7";
+const VERSION = "libreta-v8";
 const ARCHIVOS = [
   "./", "index.html", "manifest.webmanifest", "css/app.css",
   "js/app.js", "js/db.js", "js/model.js", "js/store.js", "js/ink.js", "js/render.js", "js/ui.js",

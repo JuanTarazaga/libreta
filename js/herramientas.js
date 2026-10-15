@@ -3,7 +3,7 @@
 // canvas vivo (pintarVivo). Los cambios en la página pasan por el editor para
 // que se puedan deshacer.
 
-import { Captura, reconocerForma, tocaTrazo, cortarTrazo, esTachado, envolvente, tramo } from "./ink.js";
+import { Captura, reconocerForma, tocaTrazo, cortarTrazo, esTachado, envolvente, seguirDensificando } from "./ink.js";
 import { MM, uid, cajaDe, unirCajas, cortan, transformar, matrizAlrededor, puntoEnPoligono, cajaPuntos } from "./model.js";
 import { pintarItem, altoTexto, fuenteCss } from "./render.js";
 import { cache, compartirCache, editandoTexto } from "./cache.js";
@@ -137,7 +137,6 @@ class Escritura {
       else return;
     }
     this.cap.añadir(c.x, c.y, e.timeStamp);
-    this.tEv = performance.now();
     // tachar: mientras se garabatea, en rojo lo que se va a borrar
     if (this.clave === "pen" && this.aj().tachadoBorra) {
       const ahora = performance.now();
@@ -147,7 +146,18 @@ class Escritura {
       }
     }
     if (Math.hypot(p.x - this.anclaForma.x, p.y - this.anclaForma.y) > 3) this.armarForma(p);
-    this.ed.pedirVivo();
+    this.ed.pedirVivo(this.areaVivo());
+  }
+
+  // la zona de la pantalla (px CSS) donde está lo que se dibuja en vivo: el
+  // trazo y lo que se tacharía. Sólo eso se borra y repinta cada fotograma
+  areaVivo() {
+    if (!this.cap || this.forma || !this.cap.pts.length) return null;
+    let b = cajaPuntos(this.cap.pts);
+    if (this.tachando && this.tachando.length) b = unirCajas([b, ...this.tachando.map(cajaDe)]);
+    const r = this.ed.rectPantalla(this.i), z = r.w / this.ed.paginas[this.i].w;
+    const m = this.it.w * z + 4;
+    return { x: r.x + b.x * z - m, y: r.y + b.y * z - m, w: b.w * z + 2 * m, h: b.h * z + 2 * m };
   }
 
   up(e, p) {
@@ -195,67 +205,6 @@ class Escritura {
 
   cancelar() { clearTimeout(this.tForma); this.cap = null; this.forma = null; this.tachando = null; this.ed.pedirVivo(); }
 
-  // EL TRAZO EN VIVO. Antes se densificaba y medía entero en cada fotograma:
-  // cuanto más largo el trazo, más tardaba (en el iPad se notaba al escribir
-  // mucho). Ahora lo ya calculado se guarda y sólo se añade lo nuevo; la
-  // punta llega hasta donde está el lápiz de verdad y un poco más allá, por
-  // dónde va (un fotograma): así no se queda atrás
-  vivoRapido() {
-    const it = this.it;
-    if (this.clave !== "pen" || (it.pen && it.pen !== "ballpoint")) return false;
-    // grosor casi fijo: el mismo dibujo que tendrá al soltar (pintarTrazo)
-    return (1 - (it.min != null ? it.min : 0.5)) * (this.aj().presion || 0) <= 0.15;
-  }
-  vivoDens() {
-    const pts = this.cap.pts, n = pts.length / 3;
-    let V = this.vd;
-    if (!V || V.pts !== pts) V = this.vd = { pts, out: [pts[0], pts[1], pts[2]], i: 0 };
-    const paso = Math.max(0.6, this.it.w * 0.35);
-    // un tramo es definitivo cuando ya hay un punto después de su final
-    while (V.i < n - 2) tramo(V.out, pts, V.i++, paso);
-    return V.out;
-  }
-  prediccion() {
-    const c = this.cap.crudos, m = c.length / 3;
-    // lápiz quieto: nada de adelantarse (se quedaría un rabito)
-    if (m < 3 || performance.now() - (this.tEv || 0) > 34) return null;
-    const x = c[m * 3 - 3], y = c[m * 3 - 2], t = c[m * 3 - 1];
-    let j = m - 2;
-    while (j > 0 && t - c[j * 3 + 2] < 40) j--;
-    const dt = t - c[j * 3 + 2];
-    if (dt <= 0 || dt > 120) return null;
-    let px = ((x - c[j * 3]) / dt) * 14, py = ((y - c[j * 3 + 1]) / dt) * 14;
-    const tope = 6 / this.cap.escala, d = Math.hypot(px, py);
-    if (d > tope) { px *= tope / d; py *= tope / d; }
-    return [x + px, y + py];
-  }
-  pintarVivoRapido(ctx) {
-    const it = this.it, pts = this.cap.pts, n = pts.length / 3;
-    const out = this.vivoDens();
-    const c = this.cap.crudos, m = c.length / 3;
-    const min = it.min != null ? it.min : 0.5;
-    const p = Math.max(0, Math.min(1, pts[n * 3 - 1]));
-    ctx.save();
-    ctx.strokeStyle = it.color;
-    ctx.lineWidth = it.w * (min + (1 - min) * p);
-    ctx.lineCap = "round"; ctx.lineJoin = "round";
-    ctx.beginPath();
-    ctx.moveTo(out[0], out[1]);
-    if (out.length === 3) ctx.lineTo(out[0] + 0.01, out[1]);
-    for (let k = 3; k < out.length; k += 3) ctx.lineTo(out[k], out[k + 1]);
-    if (n >= 2) ctx.lineTo(pts[n * 3 - 3], pts[n * 3 - 2]);
-    if (m) ctx.lineTo(c[m * 3 - 3], c[m * 3 - 2]);
-    const pr = this.prediccion();
-    if (pr) {
-      ctx.lineTo(pr[0], pr[1]);
-      // si el lápiz se para, se repinta sin la predicción
-      clearTimeout(this.tPred);
-      this.tPred = setTimeout(() => { if (this.cap) this.ed.pedirVivo(); }, 45);
-    }
-    ctx.stroke();
-    ctx.restore();
-  }
-
   pintarVivo(ctx) {
     if (!this.cap) return;
     this.ed.enPagina(ctx, this.i);
@@ -266,14 +215,25 @@ class Escritura {
     }
     const pts = this.cap.pts;
     if (pts.length < 3) return;
-    if (this.vivoRapido()) { this.pintarVivoRapido(ctx); return; }
     let vis = pts;
     if (this.clave === "highlighter" && this.aj().recto) {
       const n = pts.length;
       vis = [pts[0], pts[1], 1, pts[n - 3], pts[n - 2], 1];
+      pintarItem(ctx, { ...this.it, pts: vis });
+      return;
     }
-    const tmp = { ...this.it, pts: vis };
-    pintarItem(ctx, tmp);
+    // el mismo dibujo que al soltar (pintarTrazo), pero lo ya densificado se
+    // guarda de un fotograma a otro: antes se recalculaba el trazo entero
+    // cada vez y los trazos largos iban cada vez más lentos
+    if (!this.vd || this.vd.pts !== pts) this.vd = { pts, e: {}, it: { ...this.it, pts } };
+    const V = this.vd, n = pts.length / 3;
+    if (n >= 3) {
+      const out = seguirDensificando(V.e, pts, Math.max(0.6, this.it.w * 0.35));
+      const C = cache(V.it);
+      C.dens = out.concat([pts[(n - 1) * 3], pts[(n - 1) * 3 + 1], pts[(n - 1) * 3 + 2]]);
+      C.r = undefined; C.constante = undefined; C.ruta = undefined;
+    } else { const C = cache(V.it); C.dens = C.r = C.constante = C.ruta = undefined; }
+    pintarItem(ctx, V.it);
   }
 }
 
