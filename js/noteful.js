@@ -26,7 +26,9 @@
 //            valor = mínimo + u16 / 65535 × rango
 //   Detrás, [3] ids borrados (se ignoran) y [5] objetos de la página
 //   (imágenes = tipo 1, trazados = tipo 20, formas = 6) con su marco
-//   [x, y, ancho, alto, giro].
+//   [x, y, ancho, alto, giro], donde (x, y) es el CENTRO (comprobado contra la
+//   portada: tomarlo como esquina movía todo medio objeto; Juan, 15-10-2026).
+//   Los puntos de un trazado van desde la esquina superior izquierda.
 //
 // UNIDADES: 1 unidad de Noteful = 6/11 de punto (un A4 mide 1091,34 de ancho).
 // GROSOR (calibrado contra la portada que guarda el propio archivo): bolígrafo
@@ -223,7 +225,8 @@ export async function importarNoteful(file, folderId = null) {
       const objs = (resto[5] && resto[5][0]) || [];
       for (const o of objs) {
         const marco = (o[2] && o[2][1]) || [0, 0, 0, 0, 0];
-        const [x, y, w, h, rot] = marco;
+        const [cx, cy, w, h, rot] = marco;
+        const x = cx - w / 2, y = cy - h / 2;     // del centro a la esquina
         const c = o[6] || {};
         if (c[1] === 1 && c[10]) {
           const b = await blob(c[10]);

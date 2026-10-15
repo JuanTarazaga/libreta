@@ -76,27 +76,43 @@ export class Captura {
 }
 
 // ── geometría del trazo ──────────────────────────────────────────────────────
-// Densifica con curvas cuadráticas por los puntos medios: el trazo sale curvo
-// aunque la entrada llegue a saltos (60 Hz en el iPad Air 2).
+// Densifica con una curva de Catmull-Rom centrípeta: PASA por cada punto del
+// lápiz (la de antes, por los puntos medios, no: escribiendo deprisa, con
+// puntos a 3-5 pt a 60 Hz, redondeaba los picos de la "n" o la "v" y la letra
+// salía "derretida"). La centrípeta no hace bucles ni se pasa en las esquinas.
+// `tramo` añade los puntos entre el i y el i+1 (sin el i): sirve también para
+// el trazo en vivo, que se densifica poco a poco
+export function tramo(out, pts, i, paso) {
+  const n = pts.length / 3;
+  const x1 = pts[i * 3], y1 = pts[i * 3 + 1], p1 = pts[i * 3 + 2];
+  const x2 = pts[i * 3 + 3], y2 = pts[i * 3 + 4], p2 = pts[i * 3 + 5];
+  // los vecinos; en los extremos, reflejados
+  const x0 = i > 0 ? pts[i * 3 - 3] : 2 * x1 - x2, y0 = i > 0 ? pts[i * 3 - 2] : 2 * y1 - y2;
+  const x3 = i + 2 < n ? pts[i * 3 + 6] : 2 * x2 - x1, y3 = i + 2 < n ? pts[i * 3 + 7] : 2 * y2 - y1;
+  const d01 = Math.max(1e-4, Math.sqrt(Math.hypot(x1 - x0, y1 - y0)));
+  const d12 = Math.max(1e-4, Math.sqrt(Math.hypot(x2 - x1, y2 - y1)));
+  const d23 = Math.max(1e-4, Math.sqrt(Math.hypot(x3 - x2, y3 - y2)));
+  // tangentes de la parametrización centrípeta (α = 0,5), a escala del tramo
+  const m1x = ((x1 - x0) / d01 - (x2 - x0) / (d01 + d12) + (x2 - x1) / d12) * d12;
+  const m1y = ((y1 - y0) / d01 - (y2 - y0) / (d01 + d12) + (y2 - y1) / d12) * d12;
+  const m2x = ((x2 - x1) / d12 - (x3 - x1) / (d12 + d23) + (x3 - x2) / d23) * d12;
+  const m2y = ((y2 - y1) / d12 - (y3 - y1) / (d12 + d23) + (y3 - y2) / d23) * d12;
+  const largo = Math.hypot(x2 - x1, y2 - y1);
+  const k = Math.max(1, Math.ceil(largo / paso));
+  for (let j = 1; j <= k; j++) {
+    const t = j / k, t2 = t * t, t3 = t2 * t;
+    const h00 = 2 * t3 - 3 * t2 + 1, h10 = t3 - 2 * t2 + t, h01 = -2 * t3 + 3 * t2, h11 = t3 - t2;
+    out.push(h00 * x1 + h10 * m1x + h01 * x2 + h11 * m2x,
+      h00 * y1 + h10 * m1y + h01 * y2 + h11 * m2y,
+      p1 + (p2 - p1) * t);
+  }
+}
+
 export function densificar(pts, paso) {
   const n = pts.length / 3;
   if (n < 3) return pts.slice();
   const out = [pts[0], pts[1], pts[2]];
-  let px = pts[0], py = pts[1], pp = pts[2];
-  for (let i = 1; i < n - 1; i++) {
-    const cx = pts[i * 3], cy = pts[i * 3 + 1], cp = pts[i * 3 + 2];
-    const nx = (cx + pts[i * 3 + 3]) / 2, ny = (cy + pts[i * 3 + 4]) / 2, np = (cp + pts[i * 3 + 5]) / 2;
-    const largo = Math.hypot(cx - px, cy - py) + Math.hypot(nx - cx, ny - cy);
-    const k = Math.max(1, Math.ceil(largo / paso));
-    for (let j = 1; j <= k; j++) {
-      const t = j / k, u = 1 - t;
-      out.push(u * u * px + 2 * u * t * cx + t * t * nx,
-        u * u * py + 2 * u * t * cy + t * t * ny,
-        u * u * pp + 2 * u * t * cp + t * t * np);
-    }
-    px = nx; py = ny; pp = np;
-  }
-  out.push(pts[(n - 1) * 3], pts[(n - 1) * 3 + 1], pts[(n - 1) * 3 + 2]);
+  for (let i = 0; i < n - 1; i++) tramo(out, pts, i, paso);
   return out;
 }
 
@@ -497,36 +513,58 @@ export function esTachado(pts) {
   let largo = 0;
   for (let i = 1; i < n; i++) largo += Math.hypot(pts[i * 3] - pts[i * 3 - 3], pts[i * 3 + 1] - pts[i * 3 - 2]);
   // idas y vueltas a lo largo de un eje (con histéresis: un temblor no cuenta)
+  // y cuántas son EN PICO. Al tachar casi todas las vueltas son en pico; una
+  // "m" o una "n" escritas de un trazo tienen la mitad en arco (Juan, 15-oct:
+  // "se borran las cosas mientras escribo": una "m" contaba como garabato)
   const vueltas = (ex, ey) => {
-    const q = [];
+    const q = [], o = [];
     let lo = Infinity, hi = -Infinity;
     for (let i = 0; i < n; i++) {
-      const v = (pts[i * 3] - cx) * ex + (pts[i * 3 + 1] - cy) * ey;
-      q.push(v); lo = Math.min(lo, v); hi = Math.max(hi, v);
+      const dx = pts[i * 3] - cx, dy = pts[i * 3 + 1] - cy;
+      const v = dx * ex + dy * ey;
+      q.push(v); o.push(-dx * ey + dy * ex);
+      lo = Math.min(lo, v); hi = Math.max(hi, v);
     }
     const ext = hi - lo;
-    if (ext < 4) return { giros: 0, ext };
+    if (ext < 4) return { giros: 0, picos: 0, ext };
     const h = Math.max(1.5, ext * 0.3);
     // dir 0: aún sin sentido (se siguen máximo y mínimo a la vez, sin mezclar)
-    let giros = 0, dir = 0, maxv = q[0], minv = q[0];
-    for (const v of q) {
+    let dir = 0, maxv = q[0], minv = q[0], imax = 0, imin = 0;
+    const extremos = [];
+    for (let i = 0; i < n; i++) {
+      const v = q[i];
       if (dir === 0) {
-        if (v > maxv) maxv = v;
-        if (v < minv) minv = v;
-        if (maxv - v > h) { dir = -1; minv = v; } else if (v - minv > h) { dir = 1; maxv = v; }
+        if (v > maxv) { maxv = v; imax = i; }
+        if (v < minv) { minv = v; imin = i; }
+        if (maxv - v > h) { dir = -1; minv = v; imin = i; } else if (v - minv > h) { dir = 1; maxv = v; imax = i; }
       } else if (dir === 1) {
-        if (v > maxv) maxv = v;
-        else if (maxv - v > h) { giros++; dir = -1; minv = v; }
+        if (v > maxv) { maxv = v; imax = i; }
+        else if (maxv - v > h) { extremos.push(imax); dir = -1; minv = v; imin = i; }
       } else {
-        if (v < minv) minv = v;
-        else if (v - minv > h) { giros++; dir = 1; maxv = v; }
+        if (v < minv) { minv = v; imin = i; }
+        else if (v - minv > h) { extremos.push(imin); dir = 1; maxv = v; imax = i; }
       }
     }
-    return { giros, ext };
+    // en pico: cerca del extremo (el 30 % de la ida), las dos ramas casi juntas
+    let picos = 0;
+    for (const ie of extremos) {
+      const e = q[ie], cerca = ext * 0.3;
+      let a = ie, b = ie;
+      while (a > 0 && Math.abs(q[a - 1] - e) < cerca) a--;
+      while (b < n - 1 && Math.abs(q[b + 1] - e) < cerca) b++;
+      let olo = Infinity, ohi = -Infinity;
+      for (let j = a; j <= b; j++) { olo = Math.min(olo, o[j]); ohi = Math.max(ohi, o[j]); }
+      if (ohi - olo < ext * 0.4) picos++;
+    }
+    return { giros: extremos.length, picos, ext };
   };
   // a lo largo (ir y volver encima) o de través (sierra mientras avanza)
   const largoEje = vueltas(ux, uy), traves = vueltas(-uy, ux);
-  return (largoEje.giros >= 3 && largo > largoEje.ext * 2.4) || (traves.giros >= 4 && largo > traves.ext * 4 && largo > largoEje.ext * 2.2);
+  // (tu "n" y tu "de" repasan arriba y abajo: 4 vueltas en pico; por eso
+  // hacen falta 5. En bucles redondos, muchas más)
+  const enPico = (r) => r.picos >= r.giros * 0.7 || r.giros >= 8;
+  return (largoEje.giros >= 5 && enPico(largoEje) && largo > largoEje.ext * 3) ||
+    (traves.giros >= 5 && enPico(traves) && largo > traves.ext * 5 && largo > largoEje.ext * 2.2);
 }
 
 // envolvente convexa de los puntos [x, y, p, ...] → [x, y, x, y, ...]

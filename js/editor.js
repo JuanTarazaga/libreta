@@ -102,11 +102,13 @@ export class Editor {
     this.vivoCv = el("canvas", { class: "vivo" });
     // capa de DETALLE: lo que se ve, a la resolución de la pantalla, cuando el
     // zoom pasa del tope de píxeles del canvas de página (Juan, 15-oct: "la
-    // resolución no me convence"). Se pinta al quedarse quieta la vista
-    this.detalleCv = el("canvas", { class: "vivo detalle" });
+    // resolución no me convence"). Se pinta al quedarse quieta la vista y va
+    // dentro del contenido, para moverse con él
+    this.detalleCv = el("canvas", { class: "detalle" });
     this.vivo = this.vivoCv.getContext("2d");
     this.indicador = el("button", { class: "indicador", onclick: () => paneles.irAPaginaDialogo(this) });
-    this.vista.append(this.contenido, this.detalleCv, this.vivoCv, this.indicador);
+    this.contenido.append(this.detalleCv);
+    this.vista.append(this.contenido, this.vivoCv, this.indicador);
     this.raiz.append(this.barra, this.vista);
     cont.replaceChildren(this.raiz);
     this.construirBarra();
@@ -206,7 +208,9 @@ export class Editor {
     window.removeEventListener("keydown", this.teclas);
     cancelAnimationFrame(this.raf);
     if (this.quitarCarga) this.quitarCarga();
-    for (const v of this.vistas.values()) { v.cv.width = 0; v.cv.height = 0; }
+    for (const v of this.vistas.values()) { v.cv.width = 0; v.cv.height = 0; if (v.pend) v.pend.cv.width = 0; }
+    for (const c of [this.detalleCv, this.detalleLibre, this.detNuevo && this.detNuevo.cv]) if (c) { c.width = 0; c.height = 0; }
+    clearTimeout(this._tDetalle);
     store.guardarYa();
     this.alSalir();
   }
@@ -220,8 +224,7 @@ export class Editor {
     this.vivoCv.height = Math.round(r.height * dpr);
     this.vivoCv.style.width = r.width + "px";
     this.vivoCv.style.height = r.height + "px";
-    this.detalleCv.width = this.vivoCv.width; this.detalleCv.height = this.vivoCv.height;
-    this.detalleCv.style.width = r.width + "px"; this.detalleCv.style.height = r.height + "px";
+    this.ocultarDetalle();
   }
 
   horizontal() { return this.ajustes.desplazamiento === "horizontal"; }
@@ -263,9 +266,9 @@ export class Editor {
       this.anchoTotal = ancho; this.altoTotal = y;
     }
     this.limitar();
-    // los canvas de página a la nueva escala
+    // los canvas de página a la nueva escala (se repintan los que la cambian)
     for (const [i, v] of this.vistas) this.colocarVista(i, v);
-    this.sucias = new Set(this.vistas.keys());
+    this.ocultarDetalle();
     this.aplicarTransform();
   }
 
@@ -323,18 +326,24 @@ export class Editor {
     if (this.sucias.size) this.pedir();
   }
 
+  // resolución del canvas de una página (px de canvas por punto)
+  kPagina(p) {
+    const dpr = window.devicePixelRatio || 1;
+    return Math.min(this.z * dpr, Math.sqrt(MAX_PX / (p.w * p.h)));
+  }
+
+  // sólo coloca. El canvas que se ve NO se redimensiona aquí: eso lo borraba
+  // y la página parpadeaba en blanco hasta repintarse (Juan, 15-oct: "parpadea
+  // cuando te mueves"). Si hace falta otra resolución, se pinta uno nuevo
+  // aparte y se cambia por el viejo al terminar
   colocarVista(i, v) {
     const l = this.lay[i], p = this.paginas[i];
     if (!l || !p) return;
     v.div.style.left = l.x + "px"; v.div.style.top = l.y + "px";
     v.div.style.width = l.w + "px"; v.div.style.height = l.h + "px";
     v.div.style.background = colorFondo(p);
-    const dpr = window.devicePixelRatio || 1;
-    const k = Math.min(this.z * dpr, Math.sqrt(MAX_PX / (p.w * p.h)));
-    v.k = k;
     v.cv.style.width = l.w + "px"; v.cv.style.height = l.h + "px";
-    const W = Math.round(p.w * k), H = Math.round(p.h * k);
-    if (v.cv.width !== W || v.cv.height !== H) { v.cv.width = W; v.cv.height = H; }
+    if (Math.abs(this.kPagina(p) - v.k) > 1e-3) this.sucias.add(i);
   }
 
   // rectángulo de una página en coordenadas de la vista (px CSS)
@@ -407,11 +416,12 @@ export class Editor {
   pedirVivo() { this.vivoSucio = true; this.pedir(); }
 
   // POR TANDAS: una página de Noteful con 2.400 trazos tarda en pintarse; de
-  // golpe congelaba el movimiento con dos dedos ("va como a tirones"). Cada
-  // fotograma pinta lo que quepa en su presupuesto (menos mientras hay gesto)
+  // golpe congelaba el movimiento con dos dedos. Cada fotograma pinta lo que
+  // quepa en su presupuesto (menos mientras hay gesto o lápiz), y siempre en
+  // un canvas aparte: nunca se ve una página a medio pintar
   fotograma() {
     const t0 = performance.now();
-    const presupuesto = this.gesto ? 7 : 14;
+    const presupuesto = this.gesto || this.modo === "dibujo" ? 6 : 14;
     if (this.vivoSucio) { this.vivoSucio = false; this.pintarVivo(); }
     for (const i of [...this.sucias]) {
       this.sucias.delete(i);
@@ -425,62 +435,65 @@ export class Editor {
       this.seguirVista(i, v, t0 + presupuesto);
       if (v.pend) quedan = true;
     }
+    if (this.detNuevo) {
+      if (quedan || performance.now() - t0 > presupuesto) quedan = true;
+      else if (!this.seguirDetalle(t0 + presupuesto)) quedan = true;
+    }
     if (this.sucias.size || quedan) this.pedir();
   }
 
   empezarVista(i) {
     const v = this.vistas.get(i);
     if (!v) return;
-    const ctx = v.cv.getContext("2d");
+    const p = this.paginas[i], k = this.kPagina(p);
+    const W = Math.max(1, Math.round(p.w * k)), H = Math.max(1, Math.round(p.h * k));
+    const cv = (v.pend && v.pend.cv) || document.createElement("canvas");
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+    const ctx = cv.getContext("2d");
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, v.cv.width, v.cv.height);
-    ctx.setTransform(v.k, 0, 0, v.k, 0, 0);
-    pintarPapel(ctx, this.paginas[i], v.k);
-    v.pend = { lista: ordenItems(this.paginas[i], this.ocultos && this.ocultos.i === i ? this.ocultos.ids : null), k: 0 };
+    ctx.clearRect(0, 0, W, H);
+    ctx.setTransform(k, 0, 0, k, 0, 0);
+    pintarPapel(ctx, p, k);
+    v.pend = { cv, k, lista: ordenItems(p, this.ocultos && this.ocultos.i === i ? this.ocultos.ids : null), n: 0 };
   }
 
   seguirVista(i, v, limite) {
-    const ctx = v.cv.getContext("2d");
-    ctx.setTransform(v.k, 0, 0, v.k, 0, 0);
     const p = v.pend;
-    while (p.k < p.lista.length) {
-      pintarItem(ctx, p.lista[p.k++]);
-      if ((p.k & 15) === 0 && performance.now() > limite) return;
+    const ctx = p.cv.getContext("2d");
+    ctx.setTransform(p.k, 0, 0, p.k, 0, 0);
+    while (p.n < p.lista.length) {
+      pintarItem(ctx, p.lista[p.n++]);
+      if ((p.n & 15) === 0 && performance.now() > limite) return;
     }
-    v.pend = null;
-  }
-
-  pintarVista(i) {
-    this.empezarVista(i);
-    const v = this.vistas.get(i);
-    if (v) this.seguirVista(i, v, Infinity);
+    // terminada: se cambia por la que se veía, de una vez
+    const l = this.lay[i];
+    p.cv.style.width = l.w + "px"; p.cv.style.height = l.h + "px";
+    v.div.replaceChild(p.cv, v.cv);
+    v.cv.width = 0; v.cv.height = 0;      // Safari libera la memoria así
+    v.cv = p.cv; v.k = p.k; v.pend = null;
   }
 
   // pinta un elemento nuevo encima sin repintar la página entera
   pintarEncima(i, it) {
     const v = this.vistas.get(i);
     if (!v) return;
-    if (it.tool === "highlighter" || it.type === "tape") { this.redibujar(i); return; }
-    // la página aún pintándose por tandas: va al final de su lista
-    if (v.pend) { v.pend.lista.push(it); return; }
-    const ctx = v.cv.getContext("2d");
-    ctx.setTransform(v.k, 0, 0, v.k, 0, 0);
-    pintarItem(ctx, it);
-    if (this.detalleOn) {
-      const d = this.detalleCv.getContext("2d");
-      d.save();
-      this.recortePagina(d, i);
-      this.enPagina(d, i);
-      pintarItem(d, it);
-      d.restore();
+    // el subrayador va por debajo de la tinta: se repinta su zona
+    if (it.tool === "highlighter" || it.type === "tape") { this.redibujarZona(i, cajaDe(it)); return; }
+    if (v.pend) v.pend.lista.push(it);
+    if (v.k) {
+      const ctx = v.cv.getContext("2d");
+      ctx.setTransform(v.k, 0, 0, v.k, 0, 0);
+      pintarItem(ctx, it);
     }
+    this.enDetalle(i, (d) => pintarItem(d, it));
   }
 
+  // la página entera (en un canvas aparte; la vieja se ve hasta que acaba)
   redibujar(i) {
     if (i == null) for (const k of this.vistas.keys()) this.sucias.add(k);
     else this.sucias.add(i);
     this.pedir();
-    if (this.detalleOn) this.pedirDetalle(30);
+    if (this.detalleOn || this.detNuevo) this.pedirDetalle(30);
   }
 
   // repinta SÓLO una zona de la página (la goma: repintar 2.400 trazos en
@@ -488,7 +501,7 @@ export class Editor {
   redibujarZona(i, caja) {
     const v = this.vistas.get(i);
     if (!v) return;
-    if (v.pend) { this.redibujar(i); return; }     // aún pintándose entera
+    if (!v.k) { this.redibujar(i); return; }       // aún no se ha pintado nunca
     const pg = this.paginas[i], m = 2;
     const zona = { x: caja.x - m, y: caja.y - m, w: caja.w + 2 * m, h: caja.h + 2 * m };
     const items = ordenItems(pg, this.ocultos && this.ocultos.i === i ? this.ocultos.ids : null)
@@ -501,54 +514,121 @@ export class Editor {
     };
     const ctx = v.cv.getContext("2d");
     ctx.save(); ctx.setTransform(v.k, 0, 0, v.k, 0, 0); pintar(ctx); ctx.restore();
-    if (this.detalleOn) {
-      const d = this.detalleCv.getContext("2d");
-      d.save(); this.recortePagina(d, i); this.enPagina(d, i); pintar(d); d.restore();
-    }
+    // la que se estaba pintando aparte ya no vale: otra vez
+    if (v.pend) { this.sucias.add(i); this.pedir(); }
+    this.enDetalle(i, pintar);
+  }
+
+  // repinta lo que cambió entre dos instantáneas de capas: sólo su zona si
+  // las capas son las mismas; si no (orden, visibilidad, papel…), la página
+  repintarCambio(i, antes, despues) {
+    const mismas = antes.length === despues.length && antes.every((c, k) => c.id === despues[k].id && c.visible === despues[k].visible);
+    if (!mismas) { this.redibujar(i); return; }
+    const tocados = [];
+    let orden = false;
+    antes.forEach((c, k) => {
+      const a = new Set(c.items), d = new Set(despues[k].items);
+      for (const it of c.items) if (!d.has(it)) tocados.push(it);
+      for (const it of despues[k].items) if (!a.has(it)) tocados.push(it);
+      if (!orden && c.items.length === despues[k].items.length && c.items.some((it, n) => it !== despues[k].items[n])) orden = true;
+    });
+    if (!tocados.length) { this.redibujar(i); return; }
+    if (orden) { this.redibujar(i); return; }
+    this.redibujarZona(i, unirCajas(tocados.map(cajaDe)));
   }
 
   // ── detalle ──
+  // La capa de DETALLE vive dentro del contenido: se desplaza y se escala con
+  // los dedos como las páginas. Antes se ocultaba al moverse y la letra
+  // pasaba de nítida a borrosa y otra vez a nítida en cada movimiento
   necesitaDetalle() {
     const dpr = window.devicePixelRatio || 1;
-    for (const v of this.vistas.values()) if (v.k < this.z * dpr * 0.97) return true;
+    for (const [i, v] of this.vistas) if (this.kPagina(this.paginas[i]) < this.z * dpr * 0.97 || (v.k && v.k < this.z * dpr * 0.97)) return true;
     return false;
   }
   pedirDetalle(ms = 160) {
     clearTimeout(this._tDetalle);
-    // la vista se mueve: fuera el detalle (está en coordenadas de pantalla)
-    if (ms > 30 && this.detalleOn) { this.detalleCv.style.display = "none"; this.detalleOn = false; }
-    this._tDetalle = setTimeout(() => this.pintarDetalle(), ms);
+    this.detNuevo = null;           // el que se estaba pintando ya no vale
+    this._tDetalle = setTimeout(() => this.empezarDetalle(), ms);
   }
-  recortePagina(ctx, i) {
-    const r = this.rectPantalla(i), dpr = window.devicePixelRatio || 1;
+  ocultarDetalle() {
+    this.detalleCv.style.display = "none";
+    this.detalleOn = false;
+    this.detNuevo = null;
+  }
+  // de página a canvas de detalle, con el recorte de la página
+  aDetalle(ctx, r, page) {
+    const dpr = window.devicePixelRatio || 1;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.beginPath();
-    ctx.rect(r.x * dpr, r.y * dpr, r.w * dpr, r.h * dpr);
+    ctx.rect(r.x * dpr, r.y * dpr, page.w * r.z * dpr, page.h * r.z * dpr);
     ctx.clip();
+    ctx.setTransform(dpr * r.z, 0, 0, dpr * r.z, dpr * r.x, dpr * r.y);
   }
-  pintarDetalle() {
-    if (this.gesto || this.gz || !this.necesitaDetalle()) {
-      this.detalleCv.style.display = "none"; this.detalleOn = false;
-      return;
-    }
+  // pinta algo también en el detalle que se ve (y rehace el que se pinta)
+  enDetalle(i, fn) {
+    if (this.detNuevo) this.pedirDetalle(30);
+    if (!this.detalleOn || !this.detRects) return;
+    const r = this.detRects.get(i);
+    if (!r) return;
     const ctx = this.detalleCv.getContext("2d");
+    ctx.save(); this.aDetalle(ctx, r, this.paginas[i]); fn(ctx); ctx.restore();
+  }
+  empezarDetalle() {
+    if (this.gesto || this.gz) return;          // al soltar se vuelve a pedir
+    if (!this.necesitaDetalle()) { this.ocultarDetalle(); return; }
+    const dpr = window.devicePixelRatio || 1;
+    const W = Math.round(this.vw * dpr), H = Math.round(this.vh * dpr);
+    const cv = this.detalleLibre || document.createElement("canvas");
+    this.detalleLibre = null;
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+    const ctx = cv.getContext("2d");
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, this.detalleCv.width, this.detalleCv.height);
+    ctx.clearRect(0, 0, W, H);
+    const rects = new Map(), tareas = [];
     for (const [i, v] of this.vistas) {
       const r = this.rectPantalla(i);
       if (r.x > this.vw || r.y > this.vh || r.x + r.w < 0 || r.y + r.h < 0) continue;
-      const z = this.escalaPantalla(i);
-      // la parte visible, en coordenadas de página (no se pinta lo de fuera)
-      const region = { x: -r.x / z, y: -r.y / z, w: this.vw / z, h: this.vh / z };
+      const pg = this.paginas[i];
+      const z = r.w / pg.w;
+      rects.set(i, { x: r.x, y: r.y, z });
+      // sólo lo que se ve (en coordenadas de página)
+      const reg = { x: -r.x / z, y: -r.y / z, w: this.vw / z, h: this.vh / z };
+      const lista = ordenItems(pg, this.ocultos && this.ocultos.i === i ? this.ocultos.ids : null)
+        .filter((it) => { const b = cajaDe(it); return b.x < reg.x + reg.w && reg.x < b.x + b.w && b.y < reg.y + reg.h && reg.y < b.y + b.h; });
+      tareas.push({ i, k: v.k || this.kPagina(pg), lista, n: -1 });
+    }
+    this.detNuevo = { cv, rects, tareas, x: this.sx, y: this.sy, w: this.vw, h: this.vh };
+    this.pedir();
+  }
+  // un trozo del detalle; true cuando está listo y ya se ve
+  seguirDetalle(limite) {
+    const d = this.detNuevo;
+    const ctx = d.cv.getContext("2d");
+    for (const t of d.tareas) {
+      if (t.n >= t.lista.length) continue;
+      const pg = this.paginas[t.i];
       ctx.save();
-      this.recortePagina(ctx, i);
-      this.enPagina(ctx, i);
-      pintarPapel(ctx, this.paginas[i], v.k);      // el PDF de fondo, a la escala del canvas de página
-      pintarCapas(ctx, this.paginas[i], this.ocultos && this.ocultos.i === i ? this.ocultos.ids : null, region);
+      this.aDetalle(ctx, d.rects.get(t.i), pg);
+      if (t.n < 0) { pintarPapel(ctx, pg, t.k); t.n = 0; }
+      while (t.n < t.lista.length) {
+        pintarItem(ctx, t.lista[t.n++]);
+        if ((t.n & 15) === 0 && performance.now() > limite) { ctx.restore(); return false; }
+      }
       ctx.restore();
     }
-    this.detalleCv.style.display = "block";
-    this.detalleOn = true;
+    // listo: se pone en el sitio de la vista en la que se pintó
+    const viejo = this.detalleCv;
+    const s = d.cv.style;
+    d.cv.className = "detalle";
+    s.left = d.x + "px"; s.top = d.y + "px"; s.width = d.w + "px"; s.height = d.h + "px";
+    s.display = "block";
+    viejo.replaceWith(d.cv);
+    viejo.style.display = "none";
+    this.detalleLibre = viejo;
+    this.detalleCv = d.cv; this.detRects = d.rects; this.detalleOn = true;
+    this.detNuevo = null;
+    return true;
   }
 
   pintarVivo() {
@@ -588,7 +668,7 @@ export class Editor {
     if (this.historial.length > 200) this.historial.shift();
     this.rehechos.length = 0;
     store.tocar(p);
-    if (redibujar) this.redibujar(i);
+    if (redibujar) this.repintarCambio(i, antes, despues);
     return r;
   }
 
@@ -605,10 +685,18 @@ export class Editor {
     const i = this.paginas.findIndex((p) => p.id === pageId);
     if (i < 0) return;
     const p = this.paginas[i];
+    const antes = this.instantanea(i);
     p.layers = capas.map((c) => ({ ...c, items: c.items.slice() }));
     store.tocar(p);
-    this.redibujar(i);
+    this.repintarCambio(i, antes, this.instantanea(i));
     return i;
+  }
+
+  // quita el último cambio sin dejarlo para rehacer (el puntito de un toque
+  // con dos dedos)
+  descartarUltimo() {
+    const h = this.historial.pop();
+    if (h) this.aplicarCapas(h.pageId, h.antes);
   }
 
   deshacer() {
@@ -644,7 +732,7 @@ export class Editor {
   // ── páginas ──────────────────────────────────────────────────────────────
   async recargarPaginas(irA) {
     this.paginas = await store.paginas(this.n);
-    for (const v of this.vistas.values()) { v.cv.width = 0; v.div.remove(); }
+    for (const v of this.vistas.values()) { v.cv.width = 0; if (v.pend) v.pend.cv.width = 0; v.div.remove(); }
     this.vistas.clear();
     this.disponer();
     if (irA != null) this.irAPagina(irA);
@@ -681,17 +769,28 @@ export class Editor {
     this.vista.setPointerCapture(e.pointerId);
     const p = { id: e.pointerId, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t0: performance.now(), tipo: e.pointerType };
     this.punteros.set(e.pointerId, p);
-    const n = this.punteros.size;
+    // los toques IGNORADOS (la mano o un dedo apoyado mientras se escribe) no
+    // cuentan hasta que se levantan. Antes, con la mano apoyada, el siguiente
+    // toque del lápiz contaba como "dos dedos": movía la página y, si era un
+    // punto o una tilde, hacía DESHACER (Juan, 15-oct: "se borran las cosas
+    // mientras escribo")
+    const n = this.dedos().length;
 
     if (this.modo === "dibujo") {
-      // ¿segundo dedo casi a la vez que el primero? era un gesto, no un trazo
+      // ¿segundo toque poco después del primero y sin apenas trazo? Puede ser
+      // un gesto de dos dedos (Juan, 15-oct: "con los dos dedos genera muchas
+      // falsas escrituras y se pone a hacer líneas") o la mano que se apoya.
+      // Se decide por lo que hace: si se MUEVE, es un gesto (fuera la línea);
+      // si se queda quieto mientras el lápiz sigue, es la mano
       const primero = this.punteroDibujo;
-      const reciente = performance.now() - primero.t0 < 160 && Math.hypot(primero.x - primero.x0, primero.y - primero.y0) < 14;
-      if (n === 2 && reciente && e.pointerType === "touch") {
-        if (this.herr.cancelar) this.herr.cancelar();
-        this.empezarGesto();
+      const reciente = performance.now() - primero.t0 < 300 && (primero.lejos || 0) < 50;
+      if (this.dudoso && n >= 3) { this.aGesto(); return; }       // tres dedos: rehacer
+      if (n === 2 && reciente && e.pointerType === "touch" && primero.tipo === "touch") {
+        this.dudoso = p;
+        p.otro0 = { x: primero.x, y: primero.y };   // dónde estaba el lápiz entonces
+        return;
       }
-      // si no, es la palma o un dedo apoyado: se ignora
+      p.ignorado = true;
       return;
     }
     if (this.modo === "gesto") { this.empezarGesto(); return; }
@@ -715,6 +814,12 @@ export class Editor {
     p.x = e.clientX; p.y = e.clientY;
     // lo más lejos que ha llegado del inicio (un lazo cerrado acaba donde empezó)
     p.lejos = Math.max(p.lejos || 0, Math.hypot(p.x - p.x0, p.y - p.y0));
+    if (this.dudoso) {
+      const d = this.dudoso, primero = this.punteroDibujo;
+      if (p === d && p.lejos > 12) { this.aGesto(); return; }
+      // el lápiz sigue escribiendo y el otro toque quieto: era la mano
+      if (primero && (primero.lejos > 50 || performance.now() - d.t0 > 450)) { d.ignorado = true; this.dudoso = null; }
+    }
     if (this.modo === "dibujo" && p === this.punteroDibujo) {
       // eventos agrupados: más puntos por fotograma, trazo más fiel
       const lista = e.getCoalescedEvents ? e.getCoalescedEvents() : null;
@@ -733,21 +838,78 @@ export class Editor {
     const p = this.punteros.get(e.pointerId);
     if (!p) return;
     this.punteros.delete(e.pointerId);
+    const ahora = performance.now();
+    // ¿toque rápido con dos dedos? (el primero dejó un puntito: se quita y se
+    // deshace lo anterior)
+    if (this.tapDos && p === this.tapDos.otro) {
+      const t = this.tapDos;
+      this.tapDos = null;
+      if (ahora - t.t < 200 && ahora - p.t0 < 400 && !(p.lejos > 8) && this.historial.length === t.hist && this.ajustes.gestoDeshacer) {
+        if (t.añadido) this.descartarUltimo();
+        this.deshacer();
+      }
+    }
+    if (p === this.dudoso) {
+      // el segundo se levanta antes que el lápiz: toque con dos dedos si todo
+      // fue rápido y quieto; si no, era la mano
+      this.dudoso = null;
+      const primero = this.punteroDibujo;
+      if (primero && ahora - primero.t0 < 350 && !(primero.lejos > 8) && !(p.lejos > 8) && Math.abs(p.t0 - primero.t0) < 180 && this.ajustes.gestoDeshacer) {
+        if (this.herr.cancelar) this.herr.cancelar();
+        primero.ignorado = true;
+        this.punteroDibujo = null;
+        this.modo = null;
+        this.deshacer();
+      }
+      if (!this.punteros.size) this.modo = null;
+      return;
+    }
+    if (p.ignorado) { if (!this.punteros.size && this.modo !== "dibujo") this.modo = null; return; }
     if (this.modo === "dibujo" && p === this.punteroDibujo) {
+      const hist = this.historial.length;
       if (cancelado && this.herr.cancelar) this.herr.cancelar();
       else this.herr.up && this.herr.up(e, p);
       this.punteroDibujo = null;
-      this.modo = this.punteros.size ? "ignorar" : null;
+      // el lápiz se levanta con el segundo toque aún puesto: si éste se
+      // levanta enseguida, era un toque con dos dedos
+      const d = this.dudoso;
+      this.dudoso = null;
+      if (d && ahora - p.t0 < 350 && !(p.lejos > 8) && Math.abs(d.t0 - p.t0) < 180 && this.historial.length - hist <= 1) {
+        this.tapDos = { otro: d, t: ahora, hist: this.historial.length, añadido: this.historial.length === hist + 1 };
+      }
+      // lo que siga apoyado (la mano) queda ignorado: el próximo toque escribe
+      for (const q of this.punteros.values()) q.ignorado = true;
+      this.modo = null;
       return;
     }
     if (this.modo === "gesto" || this.modo === "mano") {
       if (this._rafG) { cancelAnimationFrame(this._rafG); this._rafG = 0; this.punteros.set(p.id, p); this.moverGesto(); this.punteros.delete(p.id); }
       this.gestoUp(p);
-      if (!this.punteros.size) this.terminarGesto();
+      if (!this.dedos().length) this.terminarGesto();
       else this.empezarGesto();
       return;
     }
-    if (!this.punteros.size) this.modo = null;
+    if (!this.dedos().length) this.modo = null;
+  }
+
+  // el toque dudoso resultó ser un gesto: fuera la línea a medias
+  // El gesto arranca desde donde se apoyaron los dedos y se aplica ya lo que
+  // se han movido mientras se decidía: no se pierde el principio del pellizco
+  aGesto() {
+    const d = this.dudoso, primero = this.punteroDibujo;
+    if (this.herr.cancelar) this.herr.cancelar();
+    this.punteroDibujo = null;
+    this.dudoso = null;
+    this.modo = "gesto";
+    const ahora = [];
+    if (d && primero && d.otro0) {
+      for (const [q, x, y] of [[d, d.x0, d.y0], [primero, d.otro0.x, d.otro0.y]]) { ahora.push([q, q.x, q.y]); q.x = x; q.y = y; }
+    }
+    this.empezarGesto();
+    if (ahora.length) {
+      for (const [q, x, y] of ahora) { q.x = x; q.y = y; }
+      this.moverGesto();
+    }
   }
 
   // GESTOS (reescrito el 15-oct, Juan: "el movimiento con los dedos es
@@ -758,14 +920,16 @@ export class Editor {
   // (t = centro − X·s), y si cambia el número de dedos se toma la vista de ese
   // instante como nueva base, sin recolocar nada hasta soltar.
   empezarGesto() {
-    if (this.modo !== "mano" || this.punteros.size > 1) this.modo = "gesto";
+    if (this.modo !== "mano" || this.dedos().length > 1) this.modo = "gesto";
     const ps = this.dedos();
     const c = this.centro(ps);
     const prev = this.gesto;
     this.gesto = {
       c0: c, d0: this.distancia(ps), base: { ...this.vistaT() }, n: ps.length,
-      t0: prev ? prev.t0 : performance.now(),
+      t0: prev ? prev.t0 : Math.min(performance.now(), ...ps.map((q) => q.t0)),
       maxN: Math.max(ps.length, prev ? prev.maxN : 0),
+      // cuánto tardó en llegar el último dedo desde el primero
+      llegada: Math.max(prev ? prev.llegada : 0, ps.length ? Math.max(...ps.map((q) => q.t0)) - Math.min(...ps.map((q) => q.t0)) : 0),
       movido: prev ? prev.movido : false,
       zoom: prev ? prev.zoom : false,
       añadida: prev ? prev.añadida : false,
@@ -774,7 +938,7 @@ export class Editor {
   }
 
   // los dedos en orden fijo (los dos primeros miden el pellizco)
-  dedos() { return [...this.punteros.values()].sort((a, b) => a.id - b.id); }
+  dedos() { return [...this.punteros.values()].filter((p) => !p.ignorado).sort((a, b) => a.id - b.id); }
 
   centro(ps) {
     let x = 0, y = 0;
@@ -836,8 +1000,10 @@ export class Editor {
     if (!g) return;
     // toques con 2 o 3 dedos sin mover: deshacer / rehacer (nada de doble
     // toque: Juan, 15-oct, "solo moviendo los dedos hacia dentro y fuera")
+    // y los dedos tienen que llegar casi a la vez: un dedo apoyado más un
+    // toque del lápiz no es un "toque con dos dedos"
     const dur = performance.now() - g.t0;
-    if (!this.punteros.size && !g.movido && dur < 320 && this.ajustes.gestoDeshacer) {
+    if (!this.dedos().length && !g.movido && dur < 320 && g.llegada < 180 && this.ajustes.gestoDeshacer) {
       if (g.maxN === 2) this.deshacer();
       else if (g.maxN === 3) this.rehacer();
     }
@@ -849,6 +1015,13 @@ export class Editor {
     const t = this.gz;
     if (!t) return;
     const ancla = this.aPagina(this.vx + this.vw / 2, this.vy + this.vh / 2);
+    // el detalle se queda donde se ve ahora (estirado) hasta el nuevo: sin él,
+    // al soltar el pellizco la letra se veía borrosa un momento
+    let det = null;
+    if (this.detalleOn) {
+      const st = this.detalleCv.style;
+      det = { x: parseFloat(st.left) * t.s + t.tx, y: parseFloat(st.top) * t.s + t.ty, w: parseFloat(st.width) * t.s, h: parseFloat(st.height) * t.s };
+    }
     this.z = this.z * t.s;
     this.gz = null;
     this.disponer();
@@ -858,6 +1031,12 @@ export class Editor {
       this.sy = l.y + ancla.y * this.z - this.vh / 2;
     }
     this.limitar();
+    if (det) {
+      const st = this.detalleCv.style;
+      st.left = det.x + this.sx + "px"; st.top = det.y + this.sy + "px";
+      st.width = det.w + "px"; st.height = det.h + "px";
+      st.display = "block"; this.detalleOn = true;
+    }
     this.aplicarTransform();
   }
 
