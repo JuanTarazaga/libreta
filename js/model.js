@@ -1,3 +1,5 @@
+import { cache } from "./cache.js";
+
 // Modelo de datos: tamaños de papel, plantillas, colores, ajustes por defecto y
 // operaciones sobre los elementos de una página (cajas, transformaciones).
 //
@@ -90,10 +92,13 @@ export const HERRAMIENTAS_DEF = {
     grosores: GROSORES_PLUMA.slice(),
     gi: 1,                       // índice del grosor elegido
     // los cuatro ajustes de escritura de Noteful (Juan, 15-oct)
-    presion: 0.35,               // 0..1 presión: cuánto adelgaza el trazo rápido
-    anchoMin: 0.45,              // 0..1 ancho mínimo, fracción del grosor elegido
-    suavAncho: 0.5,              // 0..1 suavizado del ancho
-    suavizado: 0.5,              // 0..1 suavizado del movimiento
+    // de serie, como Noteful con un lápiz capacitivo (medido en el archivo de
+    // Juan): grosor casi fijo, sólo un 10 % más fino en los tramos rápidos,
+    // y poco suavizado (conserva el detalle de la letra)
+    presion: 0.1,                // 0..1 presión: cuánto adelgaza el trazo rápido
+    anchoMin: 0.85,              // 0..1 ancho mínimo, fracción del grosor elegido
+    suavAncho: 0.6,              // 0..1 suavizado del ancho
+    suavizado: 0.25,             // 0..1 suavizado del movimiento
     formaAlMantener: true,
     retardoForma: 0.6,           // s quieto para convertir en forma
     tachadoBorra: false,         // garabatear encima borra
@@ -212,12 +217,12 @@ export function cajaPuntos(pts, margen = 0) {
 // La caja que ocupa un elemento en la página (girada: la que lo envuelve)
 export function cajaDe(it) {
   if (it.type === "stroke" || (it.type === "tape" && it.pts)) {
-    if (!it.bbox) it.bbox = cajaPuntos(it.pts, it.w / 2 + 1);
-    return it.bbox;
+    const C = cache(it);
+    return C.caja || (C.caja = cajaPuntos(it.pts, it.w / 2 + 1));
   }
   if (it.type === "shape" && it.pts) {
-    if (!it.bbox) it.bbox = cajaPuntos(it.pts, (it.lw || 1) / 2 + 1);
-    return it.bbox;
+    const C = cache(it);
+    return C.caja || (C.caja = cajaPuntos(it.pts, (it.lw || 1) / 2 + 1));
   }
   const { x, y, w, h } = it;
   const r = it.rot || 0;
@@ -246,8 +251,7 @@ export function transformar(it, m) {
   const esc = Math.sqrt(Math.abs(a * d - b * c));
   const giro = Math.atan2(b, a);
   // sin las cachés de geometría (_dens, _r…): son de la posición vieja
-  const n = JSON.parse(JSON.stringify(it, (k, v) => (k[0] === "_" ? undefined : v)));
-  delete n.bbox;
+  const n = JSON.parse(JSON.stringify(it, (k, v) => (k[0] === "_" || k === "bbox" ? undefined : v)));
   if (n.pts) {
     const p = n.pts;
     for (let i = 0; i < p.length; i += 3) {

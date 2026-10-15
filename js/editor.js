@@ -16,12 +16,15 @@
 import { store } from "./store.js";
 import { el, icono, boton, aviso, cerrarEmergente } from "./ui.js";
 import { pintarItem, alCargar, colorFondo, pintarPapel, pintarCapas, ordenItems } from "./render.js";
-import { HERRAMIENTAS_DEF, uid, esPalma } from "./model.js";
+import { HERRAMIENTAS_DEF, uid, esPalma, cajaDe, unirCajas } from "./model.js";
 import { db } from "./db.js";
 import { crearHerramientas } from "./herramientas.js";
 import * as paneles from "./paneles.js";
 
-const MAX_PX = 6.2e6;           // píxeles máximos por canvas de página
+// píxeles máximos por canvas de página: 4,5 M (un A4 a ~2,4x). Lo que pase de
+// ahí lo da la capa de detalle; con 6,2 M por página y tres páginas a la vez
+// el iPad Air 2 (2 GB) iba justo de memoria
+const MAX_PX = 4.5e6;
 const HUECO = 18;               // px entre páginas
 const ZOOM_MIN = 0.35, ZOOM_MAX = 6;   // relativos al ajuste al ancho
 const TIRAR_MIN = 70;           // px pasado el final para empezar a cargar una página
@@ -66,10 +69,15 @@ export class Editor {
     if (!this.herrAj.v2) { this.herrAj.eraser.modo = "partial"; this.herrAj.v2 = true; }
     // ajustes de escritura viejos (sensibilidad/retardo) → los de Noteful
     const pen = this.herrAj.pen;
-    if (pen.presion == null) pen.presion = pen.sensibilidad != null ? Math.min(1, pen.sensibilidad * 0.7) : 0.35;
-    if (pen.anchoMin == null) pen.anchoMin = 0.45;
-    if (pen.suavAncho == null) pen.suavAncho = 0.5;
+    // v3 (15-oct): los valores de Noteful medidos en su archivo, también para
+    // quien ya tenía otros guardados (los anteriores eran a ojo)
+    if (!this.herrAj.v3) {
+      Object.assign(pen, { presion: 0.1, anchoMin: 0.85, suavAncho: 0.6, suavizado: 0.25 });
+      this.herrAj.v3 = true;
+    }
     this.paginas = await store.paginas(this.n);
+    // no guardar con el lápiz (o los dedos) en la pantalla
+    store.ocupado = () => this.punteros.size > 0;
     this.n.opened = Date.now();
     store.guardarCuaderno(this.n, true);
     this.construir(contenedor);
@@ -291,7 +299,7 @@ export class Editor {
 
   // qué páginas tienen canvas: las que se ven y una de margen
   actualizarVisibles() {
-    const margen = (this.horizontal() ? this.vw : this.vh) * 0.6;
+    const margen = (this.horizontal() ? this.vw : this.vh) * 0.35;
     const vis = new Set();
     for (let i = 0; i < this.lay.length; i++) {
       const r = this.rectPantalla(i);
@@ -473,6 +481,30 @@ export class Editor {
     else this.sucias.add(i);
     this.pedir();
     if (this.detalleOn) this.pedirDetalle(30);
+  }
+
+  // repinta SÓLO una zona de la página (la goma: repintar 2.400 trazos en
+  // cada movimiento era lo que la hacía ir tan lenta). `caja` en puntos
+  redibujarZona(i, caja) {
+    const v = this.vistas.get(i);
+    if (!v) return;
+    if (v.pend) { this.redibujar(i); return; }     // aún pintándose entera
+    const pg = this.paginas[i], m = 2;
+    const zona = { x: caja.x - m, y: caja.y - m, w: caja.w + 2 * m, h: caja.h + 2 * m };
+    const items = ordenItems(pg, this.ocultos && this.ocultos.i === i ? this.ocultos.ids : null)
+      .filter((it) => { const b = cajaDe(it); return b.x < zona.x + zona.w && zona.x < b.x + b.w && b.y < zona.y + zona.h && zona.y < b.y + b.h; });
+    const pintar = (ctx) => {
+      ctx.beginPath(); ctx.rect(zona.x, zona.y, zona.w, zona.h); ctx.clip();
+      ctx.clearRect(zona.x, zona.y, zona.w, zona.h);
+      pintarPapel(ctx, pg, v.k);
+      for (const it of items) pintarItem(ctx, it);
+    };
+    const ctx = v.cv.getContext("2d");
+    ctx.save(); ctx.setTransform(v.k, 0, 0, v.k, 0, 0); pintar(ctx); ctx.restore();
+    if (this.detalleOn) {
+      const d = this.detalleCv.getContext("2d");
+      d.save(); this.recortePagina(d, i); this.enPagina(d, i); pintar(d); d.restore();
+    }
   }
 
   // ── detalle ──

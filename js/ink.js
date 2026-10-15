@@ -10,6 +10,7 @@
 // esquinas rotas que da un contorno de dos lados en curvas cerradas.
 
 import { MM, cajaPuntos } from "./model.js";
+import { cache } from "./cache.js";
 
 // ── entrada: suavizado y presión simulada ────────────────────────────────────
 export class Captura {
@@ -43,8 +44,9 @@ export class Captura {
     if (n >= 3) {
       const dx = this.sx - this.pts[n - 3], dy = this.sy - this.pts[n - 2];
       const d = Math.hypot(dx, dy) * this.escala;           // en px de pantalla
-      // distancia mínima entre puntos: menos puntos, trazo más limpio
-      if (d < 0.8) return false;
+      // distancia mínima entre puntos: Noteful guarda uno cada ~0,5 pt (medido
+      // en el archivo de Juan); descartar más quitaba detalle a la letra
+      if (d < 0.5) return false;
       const dt = Math.max(1, t - this.ultimoT);
       const v = d / dt;                                      // px por ms
       // 0,15 px/ms ≈ escribir despacio (p = 1); 2,5 px/ms ≈ trazo rápido
@@ -178,7 +180,8 @@ export function trazarSellos(ctx, pts, r) {
 
 // Pinta un trazo de bolígrafo o subrayador en coordenadas de página
 export function pintarTrazo(ctx, it) {
-  const pts = it._dens || (it._dens = densificar(it.pts, Math.max(0.6, it.w * 0.35)));
+  const C = cache(it);
+  const pts = C.dens || (C.dens = densificar(it.pts, Math.max(0.6, it.w * 0.35)));
   if (it.tool === "highlighter") {
     // subrayador: grosor fijo, extremos planos, color translúcido que no se
     // oscurece al pasar dos veces por el mismo trazo (un solo stroke)
@@ -195,9 +198,30 @@ export function pintarTrazo(ctx, it) {
     ctx.restore();
     return;
   }
-  const r = it._r || (it._r = radios(it, pts));
+  const r = C.r || (C.r = radios(it, pts));
   ctx.save();
   if (it.op != null && it.op < 1) ctx.globalAlpha = it.op;
+  // GROSOR CASI CONSTANTE (lo normal: así escribe Noteful con un lápiz
+  // capacitivo, ±6 % dentro de un trazo, medido 15-oct): una sola línea
+  // trazada, con extremos y uniones redondos. Más nítida que la unión de
+  // círculos y varias veces más rápida de pintar
+  if (C.constante === undefined) {
+    let lo = Infinity, hi = 0, suma = 0;
+    for (let i = 0; i < r.length; i++) { if (r[i] < lo) lo = r[i]; if (r[i] > hi) hi = r[i]; suma += r[i]; }
+    C.constante = hi <= lo * 1.18 ? (2 * suma) / r.length : 0;
+  }
+  if (C.constante && !ctx.esPdf) {
+    ctx.strokeStyle = it.color;
+    ctx.lineWidth = C.constante;
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(pts[0], pts[1]);
+    if (pts.length === 3) ctx.lineTo(pts[0] + 0.01, pts[1]);
+    for (let i = 3; i < pts.length; i += 3) ctx.lineTo(pts[i], pts[i + 1]);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
   if (ctx.esPdf) {
     // al exportar: tramos de línea con extremos redondos, uno por cada nivel
     // de grosor (8 niveles). Los sellos daban ~900.000 órdenes PDF por página
@@ -285,7 +309,6 @@ export function cortarTrazo(it, x, y, radio) {
   if (trozos.length === 1 && trozos[0].length === p.length) return null;   // no tocó (se queda el original)
   return trozos.filter((t) => t.length >= 6).map((pts) => {
     const n = { ...it, pts };
-    delete n._dens; delete n._r; delete n.bbox;
     n.id = undefined;
     return n;
   });

@@ -4,6 +4,7 @@
 import { db } from "./db.js";
 import { FONDOS, MM, cajaDe } from "./model.js";
 import { pintarTrazo } from "./ink.js";
+import { editandoTexto } from "./cache.js";
 
 // ── recursos: imágenes y PDFs, cargados una vez ─────────────────────────────
 const imagenes = new Map();     // blobId → {img, listo}
@@ -319,7 +320,7 @@ export function pintarTexto(ctx, it) {
     ctx.strokeStyle = st.borde; ctx.lineWidth = st.bordeAncho || 1;
     rectRedondo(ctx, 0, 0, it.w, it.h, st.radio || 0); ctx.stroke();
   }
-  if (it._editando) { ctx.restore(); return; }     // lo pinta el editor HTML
+  if (editandoTexto.has(it)) { ctx.restore(); return; }     // lo pinta el editor HTML
   const pad = st.padding || 4;
   const lh = st.tam * (st.interlineado || 1.25);
   ctx.font = fuenteCss(st);

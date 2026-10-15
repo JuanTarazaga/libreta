@@ -6,6 +6,7 @@
 import { Captura, reconocerForma, tocaTrazo, cortarTrazo, esTachado, envolvente } from "./ink.js";
 import { MM, uid, cajaDe, unirCajas, cortan, transformar, matrizAlrededor, puntoEnPoligono, cajaPuntos } from "./model.js";
 import { pintarItem, altoTexto, fuenteCss } from "./render.js";
+import { cache, compartirCache, editandoTexto } from "./cache.js";
 import { store } from "./store.js";
 import { el, icono, aviso, emergente, menu, selectorColor, leerArchivo, cerrarEmergente, compartirArchivo } from "./ui.js";
 
@@ -198,7 +199,7 @@ class Escritura {
     if (this.forma) { pintarItem(ctx, this.formaItem(this.forma)); return; }
     // lo que se va a borrar al tachar: encima, en rojo translúcido
     if (this.tachando && this.tachando.length) {
-      for (const o of this.tachando) pintarItem(ctx, { ...o, color: "#ef4444", op: 0.75, _dens: o._dens, _r: o._r });
+      for (const o of this.tachando) pintarItem(ctx, compartirCache({ ...o, color: "#ef4444", op: 0.75 }, o));
     }
     const pts = this.cap.pts;
     if (pts.length < 3) return;
@@ -215,7 +216,8 @@ class Escritura {
 // ── GOMA ─────────────────────────────────────────────────────────────────────
 function contornoForma(it) {
   if (it.pts) return it.pts;
-  if (!it._contorno) {
+  const C = cache(it);
+  if (!C.contorno) {
     const out = [];
     const cx = it.x + it.w / 2, cy = it.y + it.h / 2, c = Math.cos(it.rot || 0), s = Math.sin(it.rot || 0);
     const pt = (u, v) => out.push(cx + u * c - v * s, cy + u * s + v * c, 1);
@@ -225,9 +227,9 @@ function contornoForma(it) {
       const w = it.w / 2, h = it.h / 2;
       for (const [u, v] of [[-w, -h], [w, -h], [w, h], [-w, h], [-w, -h]]) pt(u, v);
     }
-    it._contorno = out;
+    C.contorno = out;
   }
-  return it._contorno;
+  return C.contorno;
 }
 
 class Goma {
@@ -285,7 +287,13 @@ class Goma {
           if (dentro) cambio = true; else nuevos.push(it);
         } else nuevos.push(it);
       }
-      if (cambio) { capa.items = nuevos; this.cambiado = true; ed.redibujar(this.i); }
+      if (cambio) {
+        // sólo la zona de lo que ha cambiado (lo quitado y los trozos nuevos)
+        const antes = new Set(capa.items), despues = new Set(nuevos);
+        const tocados = capa.items.filter((o) => !despues.has(o)).concat(nuevos.filter((o) => !antes.has(o)));
+        capa.items = nuevos; this.cambiado = true;
+        if (tocados.length) ed.redibujarZona(this.i, unirCajas(tocados.map(cajaDe)));
+      }
     }
   }
 
@@ -540,7 +548,7 @@ class Lazo {
   }
   copiar() {
     const s = this.seleccion; if (!s) return;
-    portapapeles = JSON.parse(JSON.stringify(s.items.map((it) => { const o = { ...it }; delete o._dens; delete o._r; delete o._contorno; return o; })));
+    portapapeles = JSON.parse(JSON.stringify(s.items, (k, v) => (k === "bbox" ? undefined : v)));
     aviso("Copied");
   }
   cortar() { this.copiar(); this.borrar(); }
@@ -576,7 +584,6 @@ class Lazo {
     const s = this.seleccion; if (!s) return;
     const nuevos = s.items.map((it) => {
       const n = { ...it };
-      delete n._dens; delete n._r;
       if (n.type === "text") n.style = { ...n.style, color };
       else if (n.type !== "image") n.color = color;
       return n;
@@ -763,7 +770,7 @@ class Texto {
   editar(i, it, nuevo = false) {
     const ed = this.ed;
     this.editando = { i, it, nuevo };
-    it._editando = true;
+    editandoTexto.add(it);
     if (!nuevo) ed.redibujar(i);
     const ta = el("textarea", { class: "editor-texto", spellcheck: "true" });
     ta.value = it.text || "";
@@ -845,7 +852,7 @@ class Texto {
     if (!e2) return;
     this.editando = null;
     const { i, it, nuevo } = e2;
-    delete it._editando;
+    editandoTexto.delete(it);
     const texto = this.ta.value.replace(/\s+$/, "");
     this.ta.remove(); this.ta = null;
     if (this.barraEl) { this.barraEl.remove(); this.barraEl = null; }

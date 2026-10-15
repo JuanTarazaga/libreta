@@ -1,6 +1,6 @@
 // BIBLIOTECA: carpetas, cuadernos y páginas en memoria, con guardado
-// automático en IndexedDB. Lo que se pinta (cachés de geometría, `_dens`,
-// `_r`…) no se guarda: se quita al escribir.
+// automático en IndexedDB. Las cachés de geometría viven aparte (cache.js),
+// así que una página se guarda tal cual (IndexedDB la copia por su cuenta).
 
 import { db } from "./db.js";
 import { uid, nuevoCuaderno, nuevaCarpeta, nuevaPagina } from "./model.js";
@@ -199,24 +199,34 @@ class Store {
     return Promise.all(n.pageIds.map((id) => this.pagina(id)));
   }
 
-  // marca una página como cambiada: se guarda a los 600 ms
+  // marca una página como cambiada: se guarda a los 2 s sin cambios y nunca
+  // con el lápiz en la pantalla (guardar una página de miles de trazos
+  // cuesta: a mitad de una palabra se notaba un tirón; Juan, 15-oct)
   tocar(page) {
     page.updated = Date.now();
     this.sucias.add(page.id);
     clearTimeout(this.temporizador);
-    this.temporizador = setTimeout(() => this.guardarYa(), 600);
+    this.temporizador = setTimeout(() => this.guardarSiLibre(), 2000);
+  }
+  guardarSiLibre() {
+    if (this.ocupado && this.ocupado()) {
+      clearTimeout(this.temporizador);
+      this.temporizador = setTimeout(() => this.guardarSiLibre(), 700);
+      return;
+    }
+    this.guardarYa();
   }
   async guardarYa() {
     clearTimeout(this.temporizador);
     if (!this.sucias.size) return;
     const ids = [...this.sucias];
     this.sucias.clear();
-    const lista = ids.map((id) => this.pages.get(id)).filter(Boolean).map(copiaLimpia);
+    const lista = ids.map((id) => this.pages.get(id)).filter(Boolean);
     await db.putMany("pages", lista);
     const cuadernos = new Set(lista.map((p) => p.notebookId));
     for (const nid of cuadernos) {
       const n = this.notebooks.get(nid);
-      if (n) { n.updated = Date.now(); await db.put("notebooks", copiaLimpia(n)); }
+      if (n) { n.updated = Date.now(); await db.put("notebooks", n); }
     }
   }
 
