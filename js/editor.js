@@ -82,6 +82,9 @@ export class Editor {
       Object.assign(pen, { anchoMin: 0.5, suavAncho: 0.3, suavizado: 0.5 });
       this.herrAj.v4 = true;
     }
+    // v5 (16-oct): la presión pasa a ser la curva de Noteful; al 100 % es
+    // como en Noteful (antes era otra y Juan la tenía a 0)
+    if (!this.herrAj.v5) { pen.presion = 1; this.herrAj.v5 = true; }
     this.paginas = await store.paginas(this.n);
     // no guardar con el lápiz (o los dedos) en la pantalla
     store.ocupado = () => this.punteros.size > 0;
@@ -311,7 +314,9 @@ export class Editor {
     this.contenido.style.transform = `translate(${t.tx}px, ${t.ty}px) scale(${t.s})`;
     this.pedirDetalle();
     this.actualizarVisibles();
-    this.actualizarIndicador();
+    // el indicador de página, como mucho cada 150 ms mientras hay gesto
+    const ahora = performance.now();
+    if (!this.gesto || ahora - (this._tInd || 0) > 150) { this._tInd = ahora; this.actualizarIndicador(); }
     this.pedirVivo();
     if (this.herramientas && this.herramientas.text.editando) this.herramientas.text.reubicar();
   }
@@ -1096,6 +1101,9 @@ export class Editor {
   // (t = centro − X·s), y si cambia el número de dedos se toma la vista de ese
   // instante como nueva base, sin recolocar nada hasta soltar.
   empezarGesto() {
+    // sin sombras de página mientras se mueve o se hace zoom: Safari las
+    // volvía a dibujar a cada escala (tirones en el iPad)
+    this.vista.classList.add("moviendo");
     if (this.modo !== "mano" || this.dedos().length > 1) this.modo = "gesto";
     const ps = this.dedos();
     const c = this.centro(ps);
@@ -1262,6 +1270,7 @@ export class Editor {
   terminarGesto() {
     const g = this.gesto;
     this.gesto = null;
+    this.vista.classList.remove("moviendo");
     for (const [i, v] of this.vistas) if (v.k && this.kPagina(this.paginas[i]) / v.k > 1.3) this.sucias.add(i);
     this.pedir();
     this.modo = null;

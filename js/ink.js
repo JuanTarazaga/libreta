@@ -50,9 +50,20 @@ export class Captura {
       // en un archivo real); descartar más quitaba detalle a la letra
       if (d < 0.5) return false;
       const dt = Math.max(1, t - this.ultimoT);
-      const v = d / dt;                                      // px por ms
-      // 0,15 px/ms ≈ escribir despacio (p = 1); 2,5 px/ms ≈ trazo rápido
-      const objetivo = 1 - (a.presion || 0) * Math.min(1, Math.max(0, (v - 0.15) / 2.35));
+      let objetivo;
+      if (a.modelo === 3) {
+        // LA CURVA DE NOTEFUL (medida en los apuntes de Juan, 16-oct): grosor
+        // entero hasta ~55 pt de página por segundo y luego más fino, hasta
+        // el 63 % hacia 150 pt/s (en puntos de PÁGINA: con zoom se escribe
+        // más despacio en la página y el trazo sale más entero)
+        const vp = (Math.hypot(dx, dy) / dt) * 1000;         // pt de página por s
+        objetivo = 1 - (a.presion || 0) * 0.365 * Math.max(0, (vp - 55) / 93);
+        objetivo = Math.max(0.05, objetivo);
+      } else {
+        const v = d / dt;                                    // px por ms
+        // 0,15 px/ms ≈ escribir despacio (p = 1); 2,5 px/ms ≈ trazo rápido
+        objetivo = 1 - (a.presion || 0) * Math.min(1, Math.max(0, (v - 0.15) / 2.35));
+      }
       p += (objetivo - p) * (1 - 0.92 * (a.suavAncho != null ? a.suavAncho : 0.5));
     }
     this.p = p;
@@ -207,13 +218,15 @@ export function radios(it, pts) {
     largoTotal += Math.hypot(pts[i * 3] - pts[i * 3 - 3], pts[i * 3 + 1] - pts[i * 3 - 2]);
     acum[i] = largoTotal;
   }
-  // trazos nuevos (v2): p en [0, 1] y el ancho mínimo del trazo
-  const v2 = it.v === 2, min = it.min != null ? it.min : 0.5;
+  // trazos nuevos (v2/v3): p en [0, 1] y el ancho mínimo del trazo. En v3
+  // (como Noteful) el ancho mínimo es un SUELO: el grosor es p, pero nunca
+  // por debajo del mínimo; en v2 se repartía entre el mínimo y el entero
+  const v2 = it.v === 2 || it.v === 3, v3 = it.v === 3, min = it.min != null ? it.min : 0.5;
   for (let i = 0; i < n; i++) {
     const p = pts[i * 3 + 2];
     let w;
     if (v2 && tipo !== "nf") {
-      const f = min + (1 - min) * Math.max(0, Math.min(1, p));
+      const f = v3 ? Math.max(min, Math.min(1, p)) : min + (1 - min) * Math.max(0, Math.min(1, p));
       if (tipo === "fountain") {
         const j = Math.min(n - 1, i + 1), k = Math.max(0, i - 1);
         const ang = Math.atan2(pts[j * 3 + 1] - pts[k * 3 + 1], pts[j * 3] - pts[k * 3]);

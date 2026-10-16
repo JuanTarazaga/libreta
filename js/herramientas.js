@@ -55,7 +55,7 @@ class Escritura {
     this.it = {
       type: "stroke", tool: hl ? "highlighter" : "pen", pen: hl ? null : aj.tipo,
       color: aj.color, w: mm * MM, op: hl ? aj.opacidad : 1,
-      v: 2, min: hl ? 1 : aj.anchoMin,
+      v: hl ? 2 : 3, min: hl ? 1 : aj.anchoMin,
       // curva híbrida, con la escala de pantalla a la que se escribe (decide
       // qué puntos están "juntos" y cuáles "separados")
       cur: "h", esc: Math.round(ed.escalaPantalla(c.i) * 100) / 100,
@@ -64,6 +64,7 @@ class Escritura {
       presion: hl ? 0 : aj.presion,
       suavAncho: hl ? 0.5 : aj.suavAncho,
       suavizado: hl ? 0.4 : aj.suavizado,
+      modelo: hl ? 2 : 3,
     }, ed.escalaPantalla(c.i));
     this.cap.añadir(c.x, c.y, e.timeStamp);
     this.forma = null;
@@ -240,6 +241,10 @@ class Escritura {
       const C = cache(V.it);
       if (this.it.cur === "h") C.dens = seguirDensificandoH(V.e, pts, paso, this.it.esc);
       else C.dens = seguirDensificando(V.e, pts, paso).concat([pts[(n - 1) * 3], pts[(n - 1) * 3 + 1], pts[(n - 1) * 3 + 2]]);
+      // la punta, hasta donde está DE VERDAD el lápiz (el suavizado va un poco
+      // por detrás); al soltar, terminar() añade ese mismo punto
+      const c = this.cap.crudos, m = c.length;
+      if (m >= 3 && Math.hypot(c[m - 3] - pts[(n - 1) * 3], c[m - 2] - pts[(n - 1) * 3 + 1]) > 0.3) C.dens.push(c[m - 3], c[m - 2], pts[(n - 1) * 3 + 2]);
       C.r = undefined; C.constante = undefined; C.ruta = undefined; C.modo = undefined;
     } else { const C = cache(V.it); C.dens = C.r = C.constante = C.ruta = C.modo = undefined; }
     pintarItem(ctx, V.it);

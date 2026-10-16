@@ -95,7 +95,7 @@ export const HERRAMIENTAS_DEF = {
     // de serie, los de Noteful con los que mejor se escribe con un lápiz
     // capacitivo (ancho mínimo 50 %, suavizado de ancho 30 %, suavizado de
     // movimiento 3 de 6 = 50 %)
-    presion: 0.1,                // 0..1 presión: cuánto adelgaza el trazo rápido
+    presion: 1,                  // 0..1 presión: cuánto adelgaza el trazo rápido (1 = como Noteful)
     anchoMin: 0.5,               // 0..1 ancho mínimo, fracción del grosor elegido
     suavAncho: 0.3,              // 0..1 suavizado del ancho
     suavizado: 0.5,              // 0..1 suavizado del movimiento (3 de 6 en Noteful)
