@@ -113,9 +113,18 @@ export class Editor {
     // dentro del contenido, para moverse con él
     this.detalleCv = el("canvas", { class: "detalle" });
     this.vivo = this.vivoCv.getContext("2d");
+    // la TINTA que se está escribiendo va en un lienzo pequeño que sólo cubre
+    // la zona del trazo: el del tamaño de la pantalla (3 millones de píxeles)
+    // se recomponía en cada fotograma y en el iPad Air 2 la tinta se pintaba
+    // a ~40 fotogramas por segundo (diagnóstico de Juan, 16-oct: 32 % lentos)
+    this.tintaCv = el("canvas", { class: "vivo tinta" });
+    this.tinta = this.tintaCv.getContext("2d");
+    this.tintaR = null;
+    this._vivoVisto = true;
     this.indicador = el("button", { class: "indicador", onclick: () => paneles.irAPaginaDialogo(this) });
     this.contenido.append(this.detalleCv);
-    this.vista.append(this.contenido, this.vivoCv, this.indicador);
+    this.vista.append(this.contenido, this.vivoCv, this.tintaCv, this.indicador);
+    this.verVivo(false);
     this.raiz.append(this.barra, this.vista);
     cont.replaceChildren(this.raiz);
     this.construirBarra();
@@ -393,7 +402,9 @@ export class Editor {
     const r = this.rectPantalla(i);
     const dpr = window.devicePixelRatio || 1;
     const z = r.w / this.paginas[i].w;
-    ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * r.x, dpr * r.y);
+    // el lienzo de la tinta no empieza en la esquina de la pantalla
+    const o = ctx === this.tinta && this.tintaR ? this.tintaR : { x: 0, y: 0 };
+    ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * (r.x - o.x), dpr * (r.y - o.y));
   }
 
   escalaPantalla(i) { return this.rectPantalla(i).w / this.paginas[i].w; }
@@ -685,6 +696,12 @@ export class Editor {
   // pantalla en cada fotograma. Si no se sabe qué cambió, entero
   pintarVivo() {
     const ctx = this.vivo, dpr = window.devicePixelRatio || 1;
+    // escribiendo: la tinta, en su lienzo pequeño
+    const conTinta = !!(this.herr && this.herr.areaVivo);
+    if (conTinta) {
+      this.pintarTinta();
+      if (!this.vivoLleno) return;
+    }
     // ¿se dibuja algo? (se marca al pintar; ver vigilarVivo). Vacío y sin nada
     // que dibujar: ni se borra (al pellizcar se borraban 3 millones de
     // píxeles en cada fotograma sin necesidad)
@@ -693,8 +710,9 @@ export class Editor {
       this._pinto = false;
       this.vivoTodo = false; this.vivoZona = null; this.vivoAntes = null;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      if (this.herr && this.herr.pintarVivo) this.herr.pintarVivo(ctx);
+      if (!conTinta && this.herr && this.herr.pintarVivo) this.herr.pintarVivo(ctx);
       this.vivoLleno = this._pinto;
+      if (!this.vivoLleno) this.verVivo(false);
       return;
     }
     this._pinto = false;
@@ -709,13 +727,58 @@ export class Editor {
       ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
       ctx.clearRect(x, y, w, h);
     } else ctx.clearRect(0, 0, this.vivoCv.width, this.vivoCv.height);
-    if (this.herr && this.herr.pintarVivo) this.herr.pintarVivo(ctx);
+    if (!conTinta && this.herr && this.herr.pintarVivo) this.herr.pintarVivo(ctx);
     for (const h of Object.values(this.herramientas || {})) {
       if (h !== this.herr && h.pintarSiempre) h.pintarSiempre(ctx);
     }
     ctx.restore();
-    // sin zona (borrado entero) y nada pintado: queda vacío
-    if (!z && !this._pinto) this.vivoLleno = false;
+    // sin zona (borrado entero) y nada pintado: queda vacío (y se oculta:
+    // un lienzo oculto no cuesta al componer la pantalla)
+    if (!z && !this._pinto) { this.vivoLleno = false; this.verVivo(false); }
+  }
+  verVivo(si) {
+    if (this._vivoVisto === si) return;
+    this._vivoVisto = si;
+    this.vivoCv.style.visibility = si ? "visible" : "hidden";
+  }
+
+  // la tinta del trazo en curso: lienzo del tamaño de su zona (más margen),
+  // que crece si el trazo se sale y se oculta al soltar
+  pintarTinta() {
+    const h = this.herr, cv = this.tintaCv, ctx = this.tinta;
+    const dpr = window.devicePixelRatio || 1;
+    const a = h.cap ? h.areaVivo() : null;
+    const x0 = a ? Math.max(0, a.x) : 0, y0 = a ? Math.max(0, a.y) : 0;
+    const x1 = a ? Math.min(this.vw, a.x + a.w) : 0, y1 = a ? Math.min(this.vh, a.y + a.h) : 0;
+    if (!a || x1 <= x0 || y1 <= y0) {
+      if (this.tintaR) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, cv.width, cv.height);
+        cv.style.display = "none";
+        this.tintaR = null;
+      }
+      return;
+    }
+    let R = this.tintaR;
+    if (!R || x0 < R.x || y0 < R.y || x1 > R.x + R.w || y1 > R.y + R.h) {
+      const m = 120, nuevo = !R;
+      // en px CSS enteros: así los píxeles caen igual que en la página
+      const nx = Math.floor(Math.max(0, x0 - m)), ny = Math.floor(Math.max(0, y0 - m));
+      const nx1 = Math.ceil(Math.min(this.vw, x1 + m)), ny1 = Math.ceil(Math.min(this.vh, y1 + m));
+      R = this.tintaR = { x: nx, y: ny, w: nx1 - nx, h: ny1 - ny };
+      const W = Math.ceil(R.w * dpr), H = Math.ceil(R.h * dpr);
+      // al empezar un trazo, justo lo necesario; después sólo crece
+      if (nuevo || cv.width < W || cv.height < H) {
+        cv.width = nuevo ? W : Math.max(cv.width, W);
+        cv.height = nuevo ? H : Math.max(cv.height, H);
+      }
+      cv.style.left = R.x + "px"; cv.style.top = R.y + "px";
+      cv.style.width = cv.width / dpr + "px"; cv.style.height = cv.height / dpr + "px";
+      cv.style.display = "block";
+    }
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    h.pintarVivo(ctx);
   }
   // marca cuándo se pinta algo en el lienzo vivo (una vez, envolviendo las
   // órdenes que dejan tinta)
@@ -726,7 +789,7 @@ export class Editor {
     for (const f of ["stroke", "fill", "fillRect", "strokeRect", "drawImage", "fillText", "strokeText", "putImageData"]) {
       const orig = ctx[f];
       if (typeof orig !== "function") continue;
-      ctx[f] = function (...a) { ed._pinto = true; ed.vivoLleno = true; return orig.apply(this, a); };
+      ctx[f] = function (...a) { ed._pinto = true; ed.vivoLleno = true; ed.verVivo(true); return orig.apply(this, a); };
     }
   }
 
@@ -875,14 +938,19 @@ export class Editor {
       // Se decide por lo que hace: si se MUEVE, es un gesto (fuera la línea);
       // si se queda quieto mientras el lápiz sigue, es la mano
       const primero = this.punteroDibujo;
-      const reciente = performance.now() - primero.t0 < 250 && (primero.lejos || 0) < 40;
+      // margen amplio (16-oct, Juan: "como pongas un dedo unos milisegundos
+      // antes que el otro ya te pinta la pantalla")
+      const reciente = performance.now() - primero.t0 < 350 && (primero.lejos || 0) < 80;
       if (this.dudoso && n >= 3) { this.aGesto(); return; }       // tres dedos: rehacer
       if (n === 2 && reciente && e.pointerType === "touch" && primero.tipo === "touch") {
         this.dudoso = p;
         p.otro0 = { x: primero.x, y: primero.y };   // dónde estaba el lápiz entonces
+        // mientras se decide, la tinta no se ve: si es un gesto, no llega a pintarse
+        this.pedirVivo();
         return;
       }
       p.ignorado = true;
+      diag.decision("ignorado", performance.now() - primero.t0, Math.round(primero.lejos || 0), 0);
       return;
     }
     if (this.modo === "gesto") { this.empezarGesto(); return; }
@@ -913,12 +981,16 @@ export class Editor {
       // con dos dedos, el segundo se mueve tanto como el primero (o más, si el
       // primero hace de pivote del pellizco); la mano que se apoya al escribir
       // se desliza bastante menos que el lápiz
-      if (p === d && p.lejos > 12 && primero) {
+      if (p === d && p.lejos > 10 && primero) {
         const lapiz = Math.hypot(primero.x - d.otro0.x, primero.y - d.otro0.y);
-        if (p.lejos >= lapiz * 0.6) { this.aGesto(); return; }
+        if (p.lejos >= lapiz * 0.5) { this.aGesto(); return; }
       }
-      // el lápiz sigue escribiendo y el otro toque quieto: era la mano
-      if (primero && (primero.lejos > 50 || performance.now() - d.t0 > 450)) { d.ignorado = true; this.dudoso = null; }
+      // el lápiz sigue escribiendo y el otro toque quieto: era la mano (y la
+      // tinta que se había escondido, vuelve)
+      if (primero && (primero.lejos > 90 || performance.now() - d.t0 > 450)) {
+        diag.decision("mano", performance.now() - primero.t0, Math.round(primero.lejos || 0), Math.round(d.lejos || 0));
+        d.ignorado = true; this.dudoso = null; this.pedirVivo();
+      }
     }
     if (this.modo === "dibujo" && p === this.punteroDibujo) {
       // eventos agrupados: más puntos por fotograma, trazo más fiel
@@ -1000,6 +1072,7 @@ export class Editor {
   // se han movido mientras se decidía: no se pierde el principio del pellizco
   aGesto() {
     const d = this.dudoso, primero = this.punteroDibujo;
+    if (d && primero) diag.decision("gesto", performance.now() - primero.t0, Math.round(primero.lejos || 0), Math.round(d.lejos || 0), Math.round(d.t0 - primero.t0));
     if (this.herr.cancelar) this.herr.cancelar();
     this.punteroDibujo = null;
     this.dudoso = null;

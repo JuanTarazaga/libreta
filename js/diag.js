@@ -25,6 +25,15 @@ export function fotograma(ms, vivoMs, paginasPendientes) {
 }
 export function terminarTrazo() { diag.actual = null; }
 
+// decisiones al llegar un segundo toque con el lápiz/dedo escribiendo:
+// [cuándo, "gesto"|"mano"|"ignorado", ms desde el primer toque, px que llevaba
+// el primero, px del segundo, ms entre los dos toques]
+diag.decisiones = [];
+export function decision(tipo, ms, lejos1, lejos2, entre) {
+  diag.decisiones.push([+performance.now().toFixed(0), tipo, Math.round(ms), lejos1, lejos2, entre == null ? null : Math.round(entre)]);
+  if (diag.decisiones.length > 100) diag.decisiones.shift();
+}
+
 // fotogramas mientras se mueve o se hace zoom con los dedos (los últimos 600)
 diag.gestos = [];
 export function fotogramaGesto(ms, tipo) {
@@ -82,5 +91,5 @@ export function resumen() {
 
 export function exportar(extra) {
   return JSON.stringify({ fecha: new Date().toISOString(), navegador: navigator.userAgent, dpr: window.devicePixelRatio,
-    pantalla: [screen.width, screen.height], resumen: resumen(), gestosResumen: resumenGestos(), gestos: diag.gestos, ...extra, trazos: diag.trazos });
+    pantalla: [screen.width, screen.height], resumen: resumen(), gestosResumen: resumenGestos(), gestos: diag.gestos, decisiones: diag.decisiones, ...extra, trazos: diag.trazos });
 }

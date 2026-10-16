@@ -157,8 +157,9 @@ class Escritura {
   // la zona de la pantalla (px CSS) donde está lo que se dibuja en vivo: el
   // trazo y lo que se tacharía. Sólo eso se borra y repinta cada fotograma
   areaVivo() {
-    if (!this.cap || this.forma || !this.cap.pts.length) return null;
+    if (!this.cap || !this.cap.pts.length) return null;
     let b = cajaPuntos(this.cap.pts);
+    if (this.forma) b = unirCajas([b, cajaDe(this.formaItem(this.forma))]);
     if (this.tachando && this.tachando.length) b = unirCajas([b, ...this.tachando.map(cajaDe)]);
     const r = this.ed.rectPantalla(this.i), z = r.w / this.ed.paginas[this.i].w;
     const m = this.it.w * z + 4;
@@ -212,6 +213,8 @@ class Escritura {
 
   pintarVivo(ctx) {
     if (!this.cap) return;
+    // ¿segundo toque sin decidir (gesto o mano)? la tinta espera
+    if (this.ed.dudoso) return;
     this.ed.enPagina(ctx, this.i);
     if (this.forma) { pintarItem(ctx, this.formaItem(this.forma)); return; }
     // lo que se va a borrar al tachar: encima, en rojo translúcido
