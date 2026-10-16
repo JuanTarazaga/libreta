@@ -65,9 +65,13 @@ export function documentoPdf(blobId) {
 function pdfPagina(ref, escala) {
   const clave = ref.blobId + ":" + ref.index;
   let c = pdfPaginas.get(clave);
-  // a escala parecida vale la que hay (redibujar un PDF cuesta)
-  if (c && c.canvas && Math.abs(c.escala - escala) / escala < 0.15) return c.canvas;
-  if (c && c.pendiente === escala) return c ? c.canvas : null;
+  // vale la que hay si es de escala parecida O MAYOR (se reduce al pintar):
+  // antes cada zoom volvía a generar el PDF (pesado, y al acabar repintaba
+  // todas las páginas: tirones al acercar y alejar)
+  if (c && c.canvas && c.escala >= escala * 0.85) return c.canvas;
+  if (c && c.pendiente && c.pendiente >= escala * 0.85) return c.canvas;
+  // si hay que generarlo, a la mayor de las dos escalas
+  if (c && c.escala > escala) escala = c.escala;
   if (!c) { c = { escala: 0, canvas: null, pendiente: 0 }; pdfPaginas.set(clave, c); }
   c.pendiente = escala;
   documentoPdf(ref.blobId).then(async (doc) => {

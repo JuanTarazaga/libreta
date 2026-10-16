@@ -32,17 +32,12 @@ export class Captura {
   //   suavizado  suavizado del movimiento (media exponencial de la posición)
   //   (el ancho mínimo se aplica al pintar: radios(), campo `min` del trazo)
   añadir(x, y, t) {
-    const c = this.crudos;
-    // el suavizado de movimiento SÓLO donde los puntos llegan juntos (ahí el
-    // temblor del lápiz se nota); con puntos separados (letra grande, escribir
-    // deprisa) no quita temblor y sí deforma: la letra salía más pequeña y
-    // redonda que la escrita (medido con los trazos de Juan, zoom 10,8)
-    const d = c.length >= 3 ? Math.hypot(x - c[c.length - 3], y - c[c.length - 2]) * this.escala : 0;
-    // (3 px o menos: entero; 10 px o más: nada. Ajustado en simulación)
-    const pesoSuav = Math.max(0, Math.min(1, (10 - d) / 7));
-    c.push(x, y, t);
+    this.crudos.push(x, y, t);
     const a = this.a;
-    const k = 1 - Math.min(0.9, (a.suavizado || 0) * 0.8) * pesoSuav;
+    // suavizado de movimiento: media exponencial de la posición, igual con
+    // cualquier separación entre puntos (el 16-oct se probó quitarlo con los
+    // puntos separados y la letra salía peor: Juan prefiere el trazo suave)
+    const k = 1 - Math.min(0.9, (a.suavizado || 0) * 0.8);
     if (this.sx === null) { this.sx = x; this.sy = y; }
     else { this.sx += (x - this.sx) * k; this.sy += (y - this.sy) * k; }
 

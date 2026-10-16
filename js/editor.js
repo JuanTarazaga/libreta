@@ -77,6 +77,11 @@ export class Editor {
       Object.assign(pen, { presion: 0.1, anchoMin: 0.85, suavAncho: 0.6, suavizado: 0.25 });
       this.herrAj.v3 = true;
     }
+    // v4 (16-oct): los ajustes de Noteful con los que Juan escribe bien
+    if (!this.herrAj.v4) {
+      Object.assign(pen, { anchoMin: 0.5, suavAncho: 0.3, suavizado: 0.5 });
+      this.herrAj.v4 = true;
+    }
     this.paginas = await store.paginas(this.n);
     // no guardar con el lápiz (o los dedos) en la pantalla
     store.ocupado = () => this.punteros.size > 0;
@@ -351,7 +356,11 @@ export class Editor {
     v.div.style.width = l.w + "px"; v.div.style.height = l.h + "px";
     v.div.style.background = colorFondo(p);
     v.cv.style.width = l.w + "px"; v.cv.style.height = l.h + "px";
-    if (Math.abs(this.kPagina(p) - v.k) > 1e-3) this.sucias.add(i);
+    // otra resolución: sólo si cambia MUCHO. Al acercar, lo nítido lo pone la
+    // capa de detalle; al alejar, se baja para ahorrar memoria. Antes cada
+    // zoom repintaba todas las páginas visibles (tirones al soltar)
+    const r = this.kPagina(p) / (v.k || 1e-6);
+    if (!v.k || r > 1.3 || r < 0.55) this.sucias.add(i);
   }
 
   // rectángulo de una página en coordenadas de la vista (px CSS)
@@ -473,13 +482,17 @@ export class Editor {
       else if (!this.seguirDetalle(t0 + presupuesto)) quedan = true;
     }
     if (this.modo === "dibujo") diag.fotograma(performance.now() - t0, tv, pendientes);
+    else if (this.gesto) diag.fotogramaGesto(performance.now() - t0, this.gz ? "zoom" : "mover");
     if (this.sucias.size || quedan) this.pedir();
   }
 
   empezarVista(i) {
     const v = this.vistas.get(i);
     if (!v) return;
-    const p = this.paginas[i], k = this.kPagina(p);
+    const p = this.paginas[i];
+    // durante un gesto, baja resolución (rápido de crear y de pintar); al
+    // soltar, colocarVista ve que le falta resolución y la repinta bien
+    const k = this.gesto ? Math.min(this.kPagina(p), 1) : this.kPagina(p);
     const W = Math.max(1, Math.round(p.w * k)), H = Math.max(1, Math.round(p.h * k));
     const cv = (v.pend && v.pend.cv) || document.createElement("canvas");
     if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
@@ -672,6 +685,19 @@ export class Editor {
   // pantalla en cada fotograma. Si no se sabe qué cambió, entero
   pintarVivo() {
     const ctx = this.vivo, dpr = window.devicePixelRatio || 1;
+    // ¿se dibuja algo? (se marca al pintar; ver vigilarVivo). Vacío y sin nada
+    // que dibujar: ni se borra (al pellizcar se borraban 3 millones de
+    // píxeles en cada fotograma sin necesidad)
+    this.vigilarVivo();
+    if (!this.vivoLleno) {
+      this._pinto = false;
+      this.vivoTodo = false; this.vivoZona = null; this.vivoAntes = null;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      if (this.herr && this.herr.pintarVivo) this.herr.pintarVivo(ctx);
+      this.vivoLleno = this._pinto;
+      return;
+    }
+    this._pinto = false;
     let z = null;
     if (!this.vivoTodo && this.vivoZona && this.vivoAntes) z = unirCajas([this.vivoZona, this.vivoAntes]);
     this.vivoAntes = this.vivoTodo ? null : this.vivoZona;
@@ -688,6 +714,20 @@ export class Editor {
       if (h !== this.herr && h.pintarSiempre) h.pintarSiempre(ctx);
     }
     ctx.restore();
+    // sin zona (borrado entero) y nada pintado: queda vacío
+    if (!z && !this._pinto) this.vivoLleno = false;
+  }
+  // marca cuándo se pinta algo en el lienzo vivo (una vez, envolviendo las
+  // órdenes que dejan tinta)
+  vigilarVivo() {
+    if (this._vivoVigilado) return;
+    this._vivoVigilado = true;
+    const ctx = this.vivo, ed = this;
+    for (const f of ["stroke", "fill", "fillRect", "strokeRect", "drawImage", "fillText", "strokeText", "putImageData"]) {
+      const orig = ctx[f];
+      if (typeof orig !== "function") continue;
+      ctx[f] = function (...a) { ed._pinto = true; ed.vivoLleno = true; return orig.apply(this, a); };
+    }
   }
 
   // ── capas y cambios con deshacer ─────────────────────────────────────────
@@ -1149,6 +1189,8 @@ export class Editor {
   terminarGesto() {
     const g = this.gesto;
     this.gesto = null;
+    for (const [i, v] of this.vistas) if (v.k && this.kPagina(this.paginas[i]) / v.k > 1.3) this.sucias.add(i);
+    this.pedir();
     this.modo = null;
     if (this.tirarEl) this.tirarEl.classList.remove("ver");
     if (this.gz) { this.confirmarZoom(); return; }

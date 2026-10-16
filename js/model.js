@@ -92,13 +92,13 @@ export const HERRAMIENTAS_DEF = {
     grosores: GROSORES_PLUMA.slice(),
     gi: 1,                       // índice del grosor elegido
     // los cuatro ajustes de escritura de Noteful
-    // de serie, como Noteful con un lápiz capacitivo (medido en un archivo
-    // real): grosor casi fijo, sólo un 10 % más fino en los tramos rápidos,
-    // y poco suavizado (conserva el detalle de la letra)
+    // de serie, los de Noteful con los que mejor se escribe con un lápiz
+    // capacitivo (ancho mínimo 50 %, suavizado de ancho 30 %, suavizado de
+    // movimiento 3 de 6 = 50 %)
     presion: 0.1,                // 0..1 presión: cuánto adelgaza el trazo rápido
-    anchoMin: 0.85,              // 0..1 ancho mínimo, fracción del grosor elegido
-    suavAncho: 0.6,              // 0..1 suavizado del ancho
-    suavizado: 0.25,             // 0..1 suavizado del movimiento
+    anchoMin: 0.5,               // 0..1 ancho mínimo, fracción del grosor elegido
+    suavAncho: 0.3,              // 0..1 suavizado del ancho
+    suavizado: 0.5,              // 0..1 suavizado del movimiento (3 de 6 en Noteful)
     formaAlMantener: true,
     retardoForma: 0.6,           // s quieto para convertir en forma
     tachadoBorra: false,         // garabatear encima borra

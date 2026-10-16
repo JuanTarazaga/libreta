@@ -25,6 +25,22 @@ export function fotograma(ms, vivoMs, paginasPendientes) {
 }
 export function terminarTrazo() { diag.actual = null; }
 
+// fotogramas mientras se mueve o se hace zoom con los dedos (los últimos 600)
+diag.gestos = [];
+export function fotogramaGesto(ms, tipo) {
+  diag.gestos.push([+performance.now().toFixed(1), +ms.toFixed(2), tipo]);
+  if (diag.gestos.length > 600) diag.gestos.shift();
+}
+export function resumenGestos() {
+  const g = diag.gestos;
+  if (g.length < 30) return null;
+  const iv = [], ms = [];
+  for (let i = 1; i < g.length; i++) { const d = g[i][0] - g[i - 1][0]; if (d < 200) iv.push(d); ms.push(g[i][1]); }
+  const s = iv.slice().sort((a, b) => a - b), m = ms.slice().sort((a, b) => a - b);
+  return { fps: Math.round(1000 / s[s.length >> 1]), lentos: Math.round((iv.filter((d) => d > 20).length / iv.length) * 100),
+    peorMs: Math.round(s[s.length - 1]), trabajoMs: +m[m.length >> 1].toFixed(1), trabajoP95: +m[Math.floor(m.length * 0.95)].toFixed(1) };
+}
+
 const mediana = (l) => { if (!l.length) return null; const s = l.slice().sort((a, b) => a - b); return s[s.length >> 1]; };
 const p95 = (l) => { if (!l.length) return null; const s = l.slice().sort((a, b) => a - b); return s[Math.floor(s.length * 0.95)]; };
 
@@ -66,5 +82,5 @@ export function resumen() {
 
 export function exportar(extra) {
   return JSON.stringify({ fecha: new Date().toISOString(), navegador: navigator.userAgent, dpr: window.devicePixelRatio,
-    pantalla: [screen.width, screen.height], resumen: resumen(), ...extra, trazos: diag.trazos });
+    pantalla: [screen.width, screen.height], resumen: resumen(), gestosResumen: resumenGestos(), gestos: diag.gestos, ...extra, trazos: diag.trazos });
 }

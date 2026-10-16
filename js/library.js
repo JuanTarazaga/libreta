@@ -534,8 +534,12 @@ export class Biblioteca {
     const enCuaderno = el("div", { class: "lapiz-medidas" }, r
       ? `In your notebooks (last ${r.trazos} strokes): ${r.puntosPorSegundo} points/s · ${r.separacionPx} px apart · handled ${r.esperaMs} ms late (worst ${r.esperaP95}) · ${r.fps} fps, slow frames ${r.lentos}% · frame ${r.fotogramaMs} ms (worst ${r.fotogramaP95}) · ink ${r.vivoMs} ms · pages repainting ${r.conPaginas}%`
       : "Write a few lines in a notebook, then come back here to see how it went.");
+    const rg = diag.resumenGestos();
+    const enGestos = el("div", { class: "lapiz-medidas" }, rg
+      ? `Moving and zooming: ${rg.fps} fps · slow frames ${rg.lentos}% · worst ${rg.peorMs} ms · work per frame ${rg.trabajoMs} ms (worst ${rg.trabajoP95})`
+      : "Move and zoom around a notebook to measure how smooth it is.");
     const cuerpo = el("div", { class: "prueba-lapiz" }, [
-      info, cv, medidas, enCuaderno,
+      info, cv, medidas, enCuaderno, enGestos,
       el("p", { class: "nota" }, "Blue = it writes. Red = it's taken as your palm and ignored. If your stylus shows red, tap \"Use my stylus\" after writing a few words."),
     ]);
     dialogo("Stylus test", cuerpo, [
@@ -550,7 +554,7 @@ export class Biblioteca {
         const h = await db.getKV("herramientas", {});
         h.pen = Object.assign({}, h.pen, { suavizado: M.recomendado });
         // que la migración de ajustes al abrir un cuaderno no lo pise
-        h.v2 = true; h.v3 = true;
+        h.v2 = true; h.v3 = true; h.v4 = true;
         await db.setKV("herramientas", h);
         aviso(`Motion smoothing set to ${Math.round(M.recomendado * 100)}%`);
         return false;
